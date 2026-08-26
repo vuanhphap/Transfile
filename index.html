@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="vi"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Nhận file bằng camera — Optical RX</title>
+<title>Nhận file — Optical RX Cân bằng+ 16 màu</title>
 <style>
 :root{--bg:#0b0f14;--panel:#141b24;--fg:#e7edf3;--muted:#8aa0b2;--acc:#3ea6ff;--ok:#31d07a;--line:#243040}
 *{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
@@ -26,11 +26,11 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
-<div class="sub">Receiver dùng cố định chế độ <b>Cân bằng</b> — lưới 76×76, 8 màu.</div>
+<div class="sub">Receiver thử nghiệm <b>Cân bằng+</b> — lưới 76×76, 16 màu, RS48.</div>
 
 <div class="card">
   <button id="cam">Bật camera</button>
-  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng — 76×76, 8 màu</span></div>
+  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng+ — 76×76, 16 màu, RS48</span></div>
     <label class="ck"><input type="checkbox" id="dbg"> Debug (xem máy thấy gì)</label></div>
 </div>
 
@@ -555,12 +555,14 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
     2:  [[0,0,0],[255,255,255]],
     4:  [[0,0,0],[90,90,90],[175,175,175],[255,255,255]],
     8:  [[0,0,0],[255,0,0],[0,255,0],[0,0,255],[255,255,0],[255,0,255],[0,255,255],[255,255,255]],
-    16: [[0,0,0],[128,0,0],[0,128,0],[0,0,128],[128,128,0],[128,0,128],[0,128,128],[128,128,128],
-         [255,0,0],[0,255,0],[0,0,255],[255,255,0],[255,0,255],[0,255,255],[255,128,0],[255,255,255]]
+    16: [[255,0,0],[255,128,0],[255,255,0],[128,255,0],
+         [0,255,0],[0,255,128],[0,255,255],[0,128,255],
+         [0,0,255],[128,0,255],[255,0,255],[255,0,128],
+         [0,0,0],[255,255,255],[85,85,85],[170,170,170]]
   };
   var FS = 9;   // ô vuông mốc 9x9 (to hơn hẳn ô data -> lọc theo kích thước)
   var QZ = 3;   // vành trắng cách ly 3 ô
-  var CAL = 3;  // 3 hàng canh màu
+  var CAL = 4;  // V3.3: 4 hàng canh màu cho 16 màu ổn định hơn
 
   function log2(n){ return Math.round(Math.log(n)/Math.log(2)); }
   function crc16(bytes, len){
@@ -678,7 +680,14 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
       var r=geom.data[t][0], c=geom.data[t][1], o=(r*N+c)*3;
       var R=cellsRGB[o],G=cellsRGB[o+1],B=cellsRGB[o+2];
       var best=0,bd=1e18;
-      for (var p=0;p<P;p++){ var cc=calibCentroids[p]; var dr=R-cc[0],dg=G-cc[1],db=B-cc[2]; var d=dr*dr+dg*dg+db*db; if(d<bd){bd=d;best=p;} }
+      // V3.3: giảm trọng số biến thiên sáng chung, tăng trọng số khác biệt sắc độ.
+      // Centroid được đo ngay trên frame nên vẫn tự bù white-balance/exposure của camera.
+      for (var p=0;p<P;p++){
+        var cc=calibCentroids[p],dr=R-cc[0],dg=G-cc[1],db=B-cc[2];
+        var dy=(dr+dg+db)/3, du=dr-dg, dv=db-dg;
+        var d=0.55*dy*dy + 0.80*du*du + 0.80*dv*dv;
+        if(d<bd){bd=d;best=p;}
+      }
       syms[t]=best;
     }
     var cw=unpackSymbols(syms,geom);
@@ -811,7 +820,7 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
   function solve8(A,b){var n=8;for(var col=0;col<n;col++){var piv=col;for(var r=col+1;r<n;r++)if(Math.abs(A[r][col])>Math.abs(A[piv][col]))piv=r;if(Math.abs(A[piv][col])<1e-9)return null;var t=A[col];A[col]=A[piv];A[piv]=t;var tb=b[col];b[col]=b[piv];b[piv]=tb;var d=A[col][col];for(var c=col;c<n;c++)A[col][c]/=d;b[col]/=d;for(var r2=0;r2<n;r2++){if(r2===col)continue;var f=A[r2][col];if(f===0)continue;for(var c2=col;c2<n;c2++)A[r2][c2]-=f*A[col][c2];b[r2]-=f*b[col];}}return b;}
   function solveHomography(src,dst){var A=[],b=[];for(var i=0;i<4;i++){var x=src[i][0],y=src[i][1],X=dst[i][0],Y=dst[i][1];A.push([x,y,1,0,0,0,-x*X,-y*X]);b.push(X);A.push([0,0,0,x,y,1,-x*Y,-y*Y]);b.push(Y);}var h=solve8(A,b);if(!h)return null;return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];}
   function applyH(H,x,y){var d=H[6]*x+H[7]*y+H[8];return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d];}
-  function sampleAt(img,x,y){var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}return n?[R/n,G/n,B/n]:[0,0,0];}
+  function sampleAt(img,x,y){var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,sw=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;var w=(dx===0&&dy===0)?4:((dx===0||dy===0)?2:1);R+=data[o]*w;G+=data[o+1]*w;B+=data[o+2]*w;sw+=w;}return sw?[R/sw,G/sw,B/sw]:[0,0,0];}
   function sampleGrid(img,H,geom){
     var N=geom.N,cells=new Uint8ClampedArray(N*N*3);
     for(var r=0;r<N;r++)for(var c=0;c<N;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*N+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}
@@ -828,8 +837,8 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 </script>
 <script>
 const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
-// V3.2: chỉ giữ đúng preset Cân bằng, không beacon và không đổi cấu hình.
-const BALANCED={N:76,P:8,nsym:40,label:'Cân bằng'};
+// V3.3 TEST: 76×76 / 16 màu / RS48, không beacon và không đổi cấu hình.
+const BALANCED={N:76,P:16,nsym:48,label:'Cân bằng+ 16 màu'};
 const geomS=G.makeGeometry(BALANCED.N,BALANCED.P,BALANCED.nsym);
 const $=id=>document.getElementById(id);
 
@@ -849,7 +858,7 @@ function resetDecodeSession(){
   goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
   if($('goodfps'))$('goodfps').textContent='0 fps';if($('brps'))$('brps').textContent='0 block/s';if($('reta'))$('reta').textContent='—';
 }
-$('cfg').textContent='Cân bằng — '+BALANCED.N+'×'+BALANCED.N+', '+BALANCED.P+' màu';
+$('cfg').textContent='Cân bằng+ — '+BALANCED.N+'×'+BALANCED.N+', '+BALANCED.P+' màu, RS'+BALANCED.nsym;
 $('cfg').className='badge on';
 
 $('cam').onclick=async()=>{
