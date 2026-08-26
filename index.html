@@ -46,10 +46,13 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   <div style="margin:10px 0 4px" class="stat"><span>Dò mã</span><span id="det" class="badge">chưa thấy</span></div>
   <div class="bar"><i id="pi"></i></div>
   <div class="stat" style="margin-top:6px"><span>Tiến độ</span><b id="prog">0 / 0 block</b></div>
-  <div class="stat"><span>Tốc độ giải</span><b id="dfps">0 fps</b></div>
+  <div class="stat"><span>Camera xử lý</span><b id="dfps">0 fps</b></div>
+  <div class="stat"><span>Frame DATA hợp lệ</span><b id="goodfps">0 fps</b></div>
+  <div class="stat"><span>Block hữu ích</span><b id="brps">0 block/s</b></div>
+  <div class="stat"><span>ETA thực tế</span><b id="reta">—</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
   <div id="result"></div>
-  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. <b>Nếu ảnh mờ hoặc mãi không đọc được: LÙI RA XA HƠN cho tới khi nét</b> — camera điện thoại không nét khi để quá sát. Tựa máy vào vật gì đó cho đỡ rung. Bảo bên gửi để mức <b>Chắc ăn</b> và hạ FPS nếu vẫn khó.</div>
+  <div class="hint" style="margin-top:6px"><b>Lưu ý:</b> file lớn có thể cần hàng chục phút. Hãy nhìn <b>Block hữu ích/s</b> và <b>ETA thực tế</b>; bắt được 4 góc chưa đồng nghĩa frame màu đã giải CRC/RS thành công.<br>Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. <b>Nếu ảnh mờ hoặc mãi không đọc được: LÙI RA XA HƠN cho tới khi nét</b> — camera điện thoại không nét khi để quá sát. Tựa máy vào vật gì đó cho đỡ rung. Bảo bên gửi để mức <b>Chắc ăn</b> và hạ FPS nếu vẫn khó.</div>
 </div>
 </div>
 
@@ -223,7 +226,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   var _cdfCache = {};
   function robustSolitonCDF(K) {
     if (_cdfCache[K]) return _cdfCache[K];
-    var c = 0.03, delta = 0.05;
+    var c = 0.05, delta = 0.01;
     var R = c * Math.log(K / delta) * Math.sqrt(K);
     var rho = new Array(K + 1).fill(0);
     rho[1] = 1 / K;
@@ -848,6 +851,9 @@ const cap=document.createElement('canvas');
 let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
 let fcount=0, lastT=performance.now(), lastName='received.bin';
 let lastCenter=null, lastQuad=null, misses=0, frameNo=0;
+let lastDataOkT=0, lastDataOkQuad=null;
+const DATA_OK_HOLD_MS=700;
+let goodFrames=0, goodFramesWin=0, lastRateT=performance.now(), lastKnownForRate=0, blockRateEMA=0, lastUsefulT=0;
 let dataLocked=false, manualLock=false;
 const TRACK_PAD=0.20, TRACK_GLOBAL_AFTER=4, TRACK_DROP_AFTER=18;
 
@@ -862,6 +868,8 @@ function presetKeyFromConfig(N,P,ns){
 function resetDecodeSession(){
   decoder=new C.Decoder(); decoded=false; lastName='received.bin'; dataLocked=false;
   $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block'; $('fname').textContent='—';
+  goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
+  if($('goodfps'))$('goodfps').textContent='0 fps';if($('brps'))$('brps').textContent='0 block/s';if($('reta'))$('reta').textContent='—';
 }
 function setConfig(N,P,ns,source){
   const presetKey=presetKeyFromConfig(N,P,ns);
@@ -896,7 +904,8 @@ $('cam').onclick=async()=>{
       if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
-    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; dataLocked=false; manualLock=false;
+    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; dataLocked=false; manualLock=false; lastDataOkT=0; lastDataOkQuad=null;
+    goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
     // Mỗi phiên camera bắt đầu ở Cân bằng; DATA đọc được sẽ khóa cấu hình.
     cfgKey=''; geomS=null; manualPreset.value=DEFAULT_PRESET; applyPreset(DEFAULT_PRESET,'default');
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
@@ -944,7 +953,7 @@ function loop(){
               // Bảo vệ session: blockSize/frame phải khớp đúng geometry đang dùng.
               if(info.blockSize===geomS.Bfount){
                 if(info.type===C.TYPE_META){decoder.addMeta(info);dataLocked=true;if(info.name)lastName=info.name;$('fname').textContent=info.name||lastName;}
-                else {const s=decoder.addData(info);gotData=true;dataLocked=true;updateProgress(s);if(s.done&&!decoded){decoded=true;finish(s);}}
+                else {const before=(decoder.sessions[info.fileId]&&decoder.sessions[info.fileId].known)||0;const s=decoder.addData(info);goodFrames++;goodFramesWin++;gotData=true;dataLocked=true;lastDataOkT=performance.now();lastDataOkQuad=q.map(p=>[p[0],p[1]]);if(s&&s.known>before)lastUsefulT=lastDataOkT;updateProgress(s);if(s.done&&!decoded){decoded=true;finish(s);}}
                 usedQuad=q;break;
               }
             }
@@ -960,9 +969,11 @@ function loop(){
       }
     }
 
-    if(usedQuad){lastQuad=usedQuad.map(p=>[p[0],p[1]]);lastCenter=centerOf(usedQuad);misses=0;$('det').textContent=gotData?'đang giải':'đã khóa mã';$('det').className='badge on';}
+    if(usedQuad){lastQuad=usedQuad.map(p=>[p[0],p[1]]);lastCenter=centerOf(usedQuad);misses=0;const recentData=(performance.now()-lastDataOkT)<DATA_OK_HOLD_MS;$('det').textContent=(gotData||recentData)?'DATA OK ✓':'đã khóa mã';$('det').className='badge on';}
     else {misses++;if(misses>TRACK_DROP_AFTER){lastQuad=null;lastCenter=null;}
-      if(quads.length){$('det').textContent='thấy '+quads.length+' vùng'+(usedRoi?' (bám)':'');$('det').className='badge wait';}
+      const stalled=lastQuad && lastUsefulT && performance.now()-lastUsefulT>3500;
+      if(stalled){$('det').textContent='khung ổn nhưng DATA lỗi — hạ FPS';$('det').className='badge wait';}
+      else if(quads.length){$('det').textContent='thấy '+quads.length+' vùng'+(usedRoi?' (bám)':'');$('det').className='badge wait';}
       else {$('det').textContent=lastQuad?'đang bám — chờ khung nét':'chưa thấy';$('det').className=lastQuad?'badge wait':'badge';}}
 
     drawOverlay(img,quads,usedQuad,cw,ch);
@@ -971,15 +982,32 @@ function loop(){
   requestAnimationFrame(loop);
 }
 
-function updateProgress(s){ if(!s)return; const pct=Math.min(100,Math.round(s.known/s.K*100));
-  $('pi').style.width=pct+'%'; $('prog').textContent=s.known+' / '+s.K+' block'; if(s.name)$('fname').textContent=s.name;}
+function fmtDur(sec){if(!isFinite(sec)||sec<=0)return '—';sec=Math.ceil(sec);const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),ss=sec%60;if(h)return h+'g '+String(m).padStart(2,'0')+'p';return m?m+'p '+String(ss).padStart(2,'0')+'s':ss+'s';}
+function updateProgress(s){
+  if(!s)return;
+  const pct=Math.min(100,Math.round(s.known/s.K*100));
+  $('pi').style.width=pct+'%'; $('prog').textContent=s.known+' / '+s.K+' block'; if(s.name)$('fname').textContent=s.name;
+  const now=performance.now();
+  if(now-lastRateT>=1000){
+    const dt=(now-lastRateT)/1000;
+    const inst=(s.known-lastKnownForRate)/dt;
+    blockRateEMA=blockRateEMA?blockRateEMA*0.72+Math.max(0,inst)*0.28:Math.max(0,inst);
+    $('goodfps').textContent=(goodFramesWin/dt).toFixed(1)+' fps';
+    $('brps').textContent=blockRateEMA.toFixed(1)+' block/s';
+    $('reta').textContent=blockRateEMA>0.05?fmtDur((s.K-s.known)/blockRateEMA):'—';
+    goodFramesWin=0;lastKnownForRate=s.known;lastRateT=now;
+  }
+}
 function finish(s){
   const blob=new Blob([s.bytes],{type:'application/octet-stream'});
   const url=URL.createObjectURL(blob); const name=(s.name||lastName).replace(/[\/\\"]/g,'_');
-  const crc=s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC sai — thử lại</span>':'');
-  $('result').innerHTML='<div style="margin-top:8px" class="stat"><span>Hoàn tất</span>'+crc+'</div>'+
-    '<a class="dl" download="'+name+'" href="'+url+'">⬇️ Tải '+name+'</a>';
-  const a=$('result').querySelector('a'); if(a)a.click(); $('pi').style.width='100%';
+  const crc=s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC sai — thử lại</span>':'<span class="badge on">đủ byte ✓</span>');
+  $('result').innerHTML='<div style="margin-top:8px" class="stat"><span>Hoàn tất</span>'+crc+'</div>'+ '<a class="dl" id="saveFile" download="'+name+'" href="'+url+'">⬇️ LƯU FILE — '+name+'</a>';
+  $('pi').style.width='100%';$('reta').textContent='Hoàn tất';$('det').textContent='đã giải xong';$('det').className='badge on';
+  // Auto-download có thể bị Safari/Chrome mobile chặn vì không phải user gesture.
+  // Nút LƯU FILE luôn được giữ lại để người dùng bấm tay.
+  const a=$('saveFile');try{if(a)a.click();}catch(e){}
+  try{if(navigator.vibrate)navigator.vibrate([120,70,120]);}catch(e){}
 }
 function drawOverlay(img,quads,used,cw,ch){
   ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
@@ -988,12 +1016,18 @@ function drawOverlay(img,quads,used,cw,ch){
       const id=off.getContext('2d').createImageData(m.sw,m.sh);for(let i=0;i<m.sw*m.sh;i++){const d=m.dark[i]?0:255;id.data[i*4]=d;id.data[i*4+1]=d;id.data[i*4+2]=d;id.data[i*4+3]=110;}
       off.getContext('2d').putImageData(id,0,0);g.imageSmoothingEnabled=false;g.drawImage(off,0,0,m.sw,m.sh,0,0,cw,ch);}catch(e){}
     g.strokeStyle='rgba(255,180,0,.9)';g.lineWidth=Math.max(1,cw/300);
-    for(const q of quads){g.beginPath();g.moveTo(q[0][0],q[0][1]);for(let i=1;i<4;i++)g.lineTo(q[i][0],q[i][1]);g.closePath();g.stroke();}
+    for(const q0 of quads){g.beginPath();g.moveTo(q0[0][0],q0[0][1]);for(let i=1;i<4;i++)g.lineTo(q0[i][0],q0[i][1]);g.closePath();g.stroke();}
   }
-  const q=used||(quads.length?quads[0]:null); if(!q)return;
-  g.lineWidth=Math.max(2,cw/200);g.strokeStyle=used?'#31d07a':'#3ea6ff';g.beginPath();
+
+  // UX V3.1: DATA frame hợp lệ được giữ xanh 700 ms để mắt người nhìn thấy rõ.
+  // Xanh dương = chỉ bắt/track được 4 góc. Xanh lá = RS+CRC+parse DATA đã thành công.
+  const dataOk = lastDataOkQuad && (performance.now()-lastDataOkT)<DATA_OK_HOLD_MS;
+  const q = dataOk ? lastDataOkQuad : (used || (quads.length?quads[0]:null));
+  if(!q)return;
+  const col = dataOk ? '#31d07a' : '#3ea6ff';
+  g.lineWidth=Math.max(2,cw/200);g.strokeStyle=col;g.beginPath();
   g.moveTo(q[0][0],q[0][1]);for(let i=1;i<4;i++)g.lineTo(q[i][0],q[i][1]);g.closePath();g.stroke();
-  g.fillStyle=used?'#31d07a':'#3ea6ff';for(const p of q){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}
+  g.fillStyle=col;for(const p of q){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}
 }
 </script>
 </body></html>
