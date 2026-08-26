@@ -28,7 +28,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
-<div class="sub">Mặc định đọc ngay preset <b>Cân bằng</b>. Beacon chỉ dùng để tự đổi preset ở đầu phiên; nếu cần có thể chọn tay.</div>
+<div class="sub">Mặc định đọc ngay preset <b>Cân bằng</b>. Beacon chỉ dùng để tự đổi preset ở đầu phiên; V4 hỗ trợ cả <b>Turbo ngang 88×136</b> để tận dụng màn hình 16:9.</div>
 
 <div class="card">
   <button id="cam">Bật camera</button>
@@ -48,6 +48,8 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   <div class="stat" style="margin-top:6px"><span>Tiến độ</span><b id="prog">0 / 0 block</b></div>
   <div class="stat"><span>Camera xử lý</span><b id="dfps">0 fps</b></div>
   <div class="stat"><span>Frame DATA hợp lệ</span><b id="goodfps">0 fps</b></div>
+  <div class="stat"><span>Tỷ lệ DATA/khung khóa</span><b id="qrate">—</b></div>
+  <div class="stat"><span>Khuyến nghị FPS</span><b id="fpsrec">—</b></div>
   <div class="stat"><span>Block hữu ích</span><b id="brps">0 block/s</b></div>
   <div class="stat"><span>ETA thực tế</span><b id="reta">—</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
@@ -576,19 +578,18 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
     return c&0xFFFF;
   }
 
-  function makeGeometry(N, P, nsym){
+  function makeGeometry(R, P, nsym, C){
+    C=(C==null)?R:C;
     var bps=log2(P);
-    var reserved={}; function key(r,c){ return r*N+c; }
+    var reserved={}; function key(r,c){ return r*C+c; }
     var QB=FS+QZ; // khối góc gồm ô vuông + vành
-    // 4 ô vuông + vành trắng
-    var sq=[[0,0],[0,N-FS],[N-FS,N-FS],[N-FS,0]]; // TL,TR,BR,BL (top-left mỗi ô)
-    // đánh dấu square + quiet trong khối QBxQB mỗi góc
-    var qcorners=[[0,0],[0,N-QB],[N-QB,N-QB],[N-QB,0]];
+    // 4 ô vuông + vành trắng; hỗ trợ cả lưới vuông và chữ nhật.
+    var sq=[[0,0],[0,C-FS],[R-FS,C-FS],[R-FS,0]];
+    var qcorners=[[0,0],[0,C-QB],[R-QB,C-QB],[R-QB,0]];
     for (var m=0;m<4;m++){
       var br=qcorners[m][0], bc=qcorners[m][1];
       for (var dr=0;dr<QB;dr++) for (var dc=0;dc<QB;dc++){
         var rr=br+dr, cc=bc+dc;
-        // ô có thuộc square không? square nằm ở phía góc của khối
         var inSq;
         if (m===0) inSq = (dr<FS && dc<FS);
         else if (m===1) inSq = (dr<FS && dc>=QZ);
@@ -597,15 +598,15 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
         reserved[key(rr,cc)] = inSq ? {sq:m} : {quiet:1};
       }
     }
-    // canh màu: rows 0..CAL-1, cols QB..N-1-QB
+    // canh màu: 3 hàng đầu, nằm giữa hai cụm marker góc.
     var calib=[], cnt=0;
-    for (var r=0;r<CAL;r++) for (var c=QB;c<=N-1-QB;c++){
+    for (var r=0;r<CAL;r++) for (var c=QB;c<=C-1-QB;c++){
       if (reserved[key(r,c)]) continue;
       var pidx=cnt%P; cnt++;
       reserved[key(r,c)]={cal:pidx}; calib.push({r:r,c:c,p:pidx});
     }
     var data=[];
-    for (var rr2=0;rr2<N;rr2++) for (var cc2=0;cc2<N;cc2++) if (!reserved[key(rr2,cc2)]) data.push([rr2,cc2]);
+    for (var rr2=0;rr2<R;rr2++) for (var cc2=0;cc2<C;cc2++) if (!reserved[key(rr2,cc2)]) data.push([rr2,cc2]);
 
     var capacityBytes=Math.floor(data.length*bps/8);
     var nb=Math.ceil(capacityBytes/255);
@@ -616,8 +617,8 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 
     var half=(FS-1)/2;
     return {
-      N:N,P:P,bps:bps,nsym:nsym,
-      markers:{ size:FS, centers:[[half,half],[N-1-half,half],[N-1-half,N-1-half],[half,N-1-half]] },
+      N:R,R:R,C:C,P:P,bps:bps,nsym:nsym,
+      markers:{ size:FS, centers:[[half,half],[C-1-half,half],[C-1-half,R-1-half],[half,R-1-half]] },
       calib:calib, data:data,
       capacityBytes:capacityBytes, blocks:blocks, messageCap:messageCap, Bfount:Bfount, reserved:reserved
     };
@@ -654,7 +655,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   }
 
   function encodeFrame(logicalBytes, geom){
-    var N=geom.N, P=geom.P;
+    var R=geom.R||geom.N, C=geom.C||geom.N, P=geom.P;
     if (logicalBytes.length>geom.messageCap-4) throw new Error("frame quá dài");
     var msg=new Uint8Array(geom.messageCap);
     msg[0]=(logicalBytes.length>>8)&255; msg[1]=logicalBytes.length&255;
@@ -664,12 +665,11 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
     var cw=rsStreamEncode(msg,geom);
     var syms=packSymbols(cw,geom);
     var pal=PALETTES[P];
-    var grid=new Uint8ClampedArray(N*N*3);
-    function put(r,c,rgb){ var o=(r*N+c)*3; grid[o]=rgb[0]; grid[o+1]=rgb[1]; grid[o+2]=rgb[2]; }
-    for (var i=0;i<N*N;i++){ grid[i*3]=255; grid[i*3+1]=255; grid[i*3+2]=255; }
+    var grid=new Uint8ClampedArray(R*C*3);
+    function put(r,c,rgb){ var o=(r*C+c)*3; grid[o]=rgb[0]; grid[o+1]=rgb[1]; grid[o+2]=rgb[2]; }
+    for (var i=0;i<R*C;i++){ grid[i*3]=255; grid[i*3+1]=255; grid[i*3+2]=255; }
     var BLK=[0,0,0];
-    // mốc = ô vuông đen ĐẶC (bền khi nhoè); vành trắng QZ cách ly với data
-    var sqc=[[0,0],[0,N-FS],[N-FS,N-FS],[N-FS,0]];
+    var sqc=[[0,0],[0,C-FS],[R-FS,C-FS],[R-FS,0]];
     for (var sm=0;sm<4;sm++){ var sr=sqc[sm][0], sc2=sqc[sm][1];
       for (var dr=0;dr<FS;dr++) for (var dc=0;dc<FS;dc++) put(sr+dr, sc2+dc, BLK);
     }
@@ -679,13 +679,13 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   }
 
   function decodeSampled(cellsRGB, calibCentroids, geom){
-    var N=geom.N, P=geom.P;
+    var C=geom.C||geom.N, P=geom.P;
     var syms=new Uint8Array(geom.data.length);
     for (var t=0;t<geom.data.length;t++){
-      var r=geom.data[t][0], c=geom.data[t][1], o=(r*N+c)*3;
-      var R=cellsRGB[o],G=cellsRGB[o+1],B=cellsRGB[o+2];
+      var r=geom.data[t][0], c=geom.data[t][1], o=(r*C+c)*3;
+      var Rv=cellsRGB[o],Gv=cellsRGB[o+1],Bv=cellsRGB[o+2];
       var best=0,bd=1e18;
-      for (var p=0;p<P;p++){ var cc=calibCentroids[p]; var dr=R-cc[0],dg=G-cc[1],db=B-cc[2]; var d=dr*dr+dg*dg+db*db; if(d<bd){bd=d;best=p;} }
+      for (var p=0;p<P;p++){ var cc=calibCentroids[p]; var dr=Rv-cc[0],dg=Gv-cc[1],db=Bv-cc[2]; var d=dr*dr+dg*dg+db*db; if(d<bd){bd=d;best=p;} }
       syms[t]=best;
     }
     var cw=unpackSymbols(syms,geom);
@@ -820,10 +820,10 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   function applyH(H,x,y){var d=H[6]*x+H[7]*y+H[8];return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d];}
   function sampleAt(img,x,y){var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}return n?[R/n,G/n,B/n]:[0,0,0];}
   function sampleGrid(img,H,geom){
-    var N=geom.N,cells=new Uint8ClampedArray(N*N*3);
-    for(var r=0;r<N;r++)for(var c=0;c<N;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*N+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}
+    var R=geom.R||geom.N,C=geom.C||geom.N,cells=new Uint8ClampedArray(R*C*3);
+    for(var r=0;r<R;r++)for(var c=0;c<C;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*C+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}
     var P=geom.P,vals=[];for(var i=0;i<P;i++)vals.push([]);
-    for(var q=0;q<geom.calib.length;q++){var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3;vals[cl.p].push([cells[o2],cells[o2+1],cells[o2+2]]);}
+    for(var q=0;q<geom.calib.length;q++){var cl=geom.calib[q],o2=(cl.r*C+cl.c)*3;vals[cl.p].push([cells[o2],cells[o2+1],cells[o2+2]]);}
     function med(a,ch){if(!a.length)return 0;var v=a.map(x=>x[ch]).sort((x,y)=>x-y);var n=v.length,mid=n>>1;return n&1?v[mid]:(v[mid-1]+v[mid])/2;}
     var cent=[];for(var p2=0;p2<P;p2++){var a=vals[p2];cent.push(a.length?[med(a,0),med(a,1),med(a,2)]:[0,0,0]);}
     return {cells:cells,centroids:cent};
@@ -836,10 +836,12 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 <script>
 const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
 const PRESETS={
-  'an-toan':{N:60,P:8,nsym:48,label:'An toàn'},
-  'can-bang':{N:76,P:8,nsym:40,label:'Cân bằng'},
-  'nhanh':{N:84,P:8,nsym:40,label:'Nhanh'},
-  'cuc-nhanh':{N:88,P:16,nsym:56,label:'Cực nhanh'}
+  'an-toan':{R:60,C:60,P:8,nsym:48,label:'An toàn'},
+  'can-bang':{R:76,C:76,P:8,nsym:40,label:'Cân bằng'},
+  'nhanh':{R:84,C:84,P:8,nsym:40,label:'Nhanh'},
+  'cuc-nhanh':{R:88,C:88,P:16,nsym:56,label:'Cực nhanh'},
+  'turbo':{R:88,C:88,P:16,nsym:40,label:'Turbo'},
+  'turbo-ngang':{R:88,C:136,P:16,nsym:40,label:'Turbo ngang'}
 };
 const DEFAULT_PRESET='can-bang';
 const BEACON={N:40,P:8,nsym:48};
@@ -853,7 +855,7 @@ let fcount=0, lastT=performance.now(), lastName='received.bin';
 let lastCenter=null, lastQuad=null, misses=0, frameNo=0;
 let lastDataOkT=0, lastDataOkQuad=null;
 const DATA_OK_HOLD_MS=700;
-let goodFrames=0, goodFramesWin=0, lastRateT=performance.now(), lastKnownForRate=0, blockRateEMA=0, lastUsefulT=0;
+let goodFrames=0, goodFramesWin=0, lockedFramesWin=0, lastRateT=performance.now(), lastKnownForRate=0, blockRateEMA=0, lastUsefulT=0;
 let dataLocked=false, manualLock=false;
 const TRACK_PAD=0.20, TRACK_GLOBAL_AFTER=4, TRACK_DROP_AFTER=18;
 
@@ -861,34 +863,34 @@ const manualPreset=$('manualPreset');
 Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;manualPreset.appendChild(o);});
 manualPreset.value=DEFAULT_PRESET;
 
-function presetKeyFromConfig(N,P,ns){
-  for(const k of Object.keys(PRESETS)){const p=PRESETS[k];if(p.N===N&&p.P===P&&p.nsym===ns)return k;}
+function presetKeyFromConfig(R,Cc,P,ns){
+  for(const k of Object.keys(PRESETS)){const p=PRESETS[k];if(p.R===R&&p.C===Cc&&p.P===P&&p.nsym===ns)return k;}
   return null;
 }
 function resetDecodeSession(){
   decoder=new C.Decoder(); decoded=false; lastName='received.bin'; dataLocked=false;
   $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block'; $('fname').textContent='—';
-  goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
+  goodFrames=0;goodFramesWin=0;lockedFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
   if($('goodfps'))$('goodfps').textContent='0 fps';if($('brps'))$('brps').textContent='0 block/s';if($('reta'))$('reta').textContent='—';
 }
-function setConfig(N,P,ns,source){
-  const presetKey=presetKeyFromConfig(N,P,ns);
+function setConfig(R,Cc,P,ns,source){
+  const presetKey=presetKeyFromConfig(R,Cc,P,ns);
   if(!presetKey) return false;
   if(source==='beacon' && (dataLocked||manualLock)) return false; // đã khóa bằng DATA/chọn tay thì beacon không được phá geometry
-  const key=N+'/'+P+'/'+ns;
+  const key=R+'/'+Cc+'/'+P+'/'+ns;
   if(key!==cfgKey || !geomS){
     const changed=!!cfgKey && key!==cfgKey;
-    cfgKey=key;geomS=G.makeGeometry(N,P,ns);lastQuad=null;lastCenter=null;misses=0;
+    cfgKey=key;geomS=G.makeGeometry(R,P,ns,Cc);lastQuad=null;lastCenter=null;misses=0;
     if(changed && decoder) resetDecodeSession();
   }
   manualPreset.value=presetKey;
   const p=PRESETS[presetKey];
   const src=source==='beacon'?'beacon':(source==='manual'?'chọn tay':'mặc định');
-  $('cfg').textContent=p.label+' — '+N+'×'+N+', '+P+' màu ('+src+')';
+  $('cfg').textContent=p.label+' — '+R+'×'+Cc+', '+P+' màu ('+src+')';
   $('cfg').className='badge on';
   return true;
 }
-function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];if(source==='manual'){manualLock=true;dataLocked=false;}return setConfig(p.N,p.P,p.nsym,source);}
+function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];if(source==='manual'){manualLock=true;dataLocked=false;}return setConfig(p.R,p.C,p.P,p.nsym,source);}
 
 // QUAN TRỌNG: có cấu hình dùng được ngay cả khi chưa bao giờ đọc được beacon.
 applyPreset(DEFAULT_PRESET,'default');
@@ -905,10 +907,11 @@ $('cam').onclick=async()=>{
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
     decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; dataLocked=false; manualLock=false; lastDataOkT=0; lastDataOkQuad=null;
-    goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
+    goodFrames=0;goodFramesWin=0;lockedFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
     // Mỗi phiên camera bắt đầu ở Cân bằng; DATA đọc được sẽ khóa cấu hình.
     cfgKey=''; geomS=null; manualPreset.value=DEFAULT_PRESET; applyPreset(DEFAULT_PRESET,'default');
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
+    $('qrate').textContent='—';$('fpsrec').textContent='—';$('goodfps').textContent='0 fps';$('brps').textContent='0 block/s';$('reta').textContent='—';
     $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
   }catch(e){ alert('Không mở được camera: '+e.message+'\nHãy dùng HTTPS (GitHub Pages) và cấp quyền camera.'); }
 };
@@ -926,7 +929,10 @@ function loop(){
   const vw=v.videoWidth, vh=v.videoHeight;
   if(vw&&vh){
     frameNo++;
-    const scale=Math.min(1, 820/Math.max(vw,vh));
+    // 16 màu / Turbo cần nhiều pixel hơn cho mỗi cell. Detector vẫn tự downscale nội bộ,
+    // nhưng sampling màu dùng ảnh này ở độ phân giải cao hơn.
+    const procMax=(geomS&&geomS.P>=16)?1180:900;
+    const scale=Math.min(1, procMax/Math.max(vw,vh));
     const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
@@ -940,8 +946,9 @@ function loop(){
       if(!quads.length && (misses>=TRACK_GLOBAL_AFTER || frameNo%6===0)){try{quads=D.detectQuads(img,6)||[];usedRoi=false;}catch(e){}}
     } else { try{quads=D.detectQuads(img,6)||[];}catch(e){} }
     quads=orderTracked(quads);
+    if(quads.length || lastQuad)lockedFramesWin++;
 
-    let usedQuad=null, gotData=false;
+    let usedQuad=null, gotData=false, gotBeacon=false;
     for(let qi=0;qi<quads.length;qi++){
       const q=quads[qi];
       // 1) DATA/META với cấu hình hiện tại luôn được thử trước.
@@ -964,12 +971,26 @@ function loop(){
       if(!dataLocked && !manualLock){
         const Hb=D.solveHomography(geomB.markers.centers,q);
         if(Hb){const smpB=D.sampleGrid(img,Hb,geomB);let lb=null;try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
-          if(lb&&lb.length===5&&lb[0]===0xBE&&lb[1]===0xAC){if(setConfig(lb[2],lb[3],lb[4],'beacon')){usedQuad=q;break;}}
+          if(lb&&lb[0]===0xBE&&lb[1]===0xAC){
+            let ok=false;
+            if(lb.length===5)ok=setConfig(lb[2],lb[2],lb[3],lb[4],'beacon');       // beacon vuông v3
+            else if(lb.length===6)ok=setConfig(lb[2],lb[3],lb[4],lb[5],'beacon'); // beacon chữ nhật v4
+            if(ok){usedQuad=q;gotBeacon=true;break;}
+          }
         }
       }
     }
 
-    if(usedQuad){lastQuad=usedQuad.map(p=>[p[0],p[1]]);lastCenter=centerOf(usedQuad);misses=0;const recentData=(performance.now()-lastDataOkT)<DATA_OK_HOLD_MS;$('det').textContent=(gotData||recentData)?'DATA OK ✓':'đã khóa mã';$('det').className='badge on';}
+    if(usedQuad){
+      misses=0;
+      if(gotBeacon){
+        // Beacon dùng geometry 40×40 khác DATA. Không mang quad beacon sang frame DATA kế tiếp.
+        lastQuad=null;lastCenter=null;$('det').textContent='đã nhận cấu hình — chờ DATA';$('det').className='badge wait';
+      }else{
+        lastQuad=usedQuad.map(p=>[p[0],p[1]]);lastCenter=centerOf(usedQuad);
+        const recentData=(performance.now()-lastDataOkT)<DATA_OK_HOLD_MS;$('det').textContent=(gotData||recentData)?'DATA OK ✓':'đã khóa mã';$('det').className='badge on';
+      }
+    }
     else {misses++;if(misses>TRACK_DROP_AFTER){lastQuad=null;lastCenter=null;}
       const stalled=lastQuad && lastUsefulT && performance.now()-lastUsefulT>3500;
       if(stalled){$('det').textContent='khung ổn nhưng DATA lỗi — hạ FPS';$('det').className='badge wait';}
@@ -993,9 +1014,22 @@ function updateProgress(s){
     const inst=(s.known-lastKnownForRate)/dt;
     blockRateEMA=blockRateEMA?blockRateEMA*0.72+Math.max(0,inst)*0.28:Math.max(0,inst);
     $('goodfps').textContent=(goodFramesWin/dt).toFixed(1)+' fps';
+    const qr=lockedFramesWin>0?Math.min(1,goodFramesWin/lockedFramesWin):0;
+    $('qrate').textContent=lockedFramesWin?Math.round(qr*100)+'%':'—';
+    let rec='giữ 10–12 FPS';
+    if(geomS&&geomS.P>=16){
+      if(qr>=0.78&&blockRateEMA>=8)rec='tốt — thử 20 FPS';
+      else if(qr>=0.55&&blockRateEMA>=5)rec='ổn — 15–18 FPS';
+      else rec='hạ 10–14 FPS / lùi máy';
+    }else{
+      if(qr>=0.78&&blockRateEMA>=8)rec='tốt — thử 15–18 FPS';
+      else if(qr>=0.55)rec='giữ 10–14 FPS';
+      else rec='hạ 6–10 FPS / lùi máy';
+    }
+    $('fpsrec').textContent=rec;
     $('brps').textContent=blockRateEMA.toFixed(1)+' block/s';
     $('reta').textContent=blockRateEMA>0.05?fmtDur((s.K-s.known)/blockRateEMA):'—';
-    goodFramesWin=0;lastKnownForRate=s.known;lastRateT=now;
+    goodFramesWin=0;lockedFramesWin=0;lastKnownForRate=s.known;lastRateT=now;
   }
 }
 function finish(s){
