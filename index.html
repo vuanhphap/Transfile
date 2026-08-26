@@ -8,6 +8,7 @@
 h1{font-size:18px;margin:6px 0 2px}.sub{color:var(--muted);font-size:13px;margin-bottom:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
 button{font-size:15px;padding:12px;border-radius:10px;border:none;background:var(--acc);color:#04121f;font-weight:700;width:100%;cursor:pointer}
+button.sec{background:#1a2430;color:var(--fg);border:1px solid var(--line)}
 .viewwrap{position:relative;border-radius:12px;overflow:hidden;background:#000}
 video{width:100%;display:block}
 #ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
@@ -19,6 +20,8 @@ video{width:100%;display:block}
 .badge.on{background:rgba(49,208,122,.15);color:var(--ok)}
 .badge.wait{background:rgba(62,166,255,.15);color:var(--acc)}
 .hint{font-size:12px;color:var(--muted);line-height:1.5}
+.rowb{display:flex;gap:8px;align-items:center;margin-top:8px}
+label.ck{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-weight:700;padding:12px;border-radius:10px;text-decoration:none;margin-top:8px}
 </style></head><body>
 <div class="wrap">
@@ -27,7 +30,8 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 
 <div class="card">
   <button id="cam">Bật camera</button>
-  <div style="margin-top:8px" class="stat"><span>Cấu hình</span><span id="cfg" class="badge wait">đang dò…</span></div>
+  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge wait">đang dò…</span></div>
+    <label class="ck"><input type="checkbox" id="dbg"> Debug (xem máy thấy gì)</label></div>
 </div>
 
 <div class="card">
@@ -38,7 +42,7 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
   <div class="stat"><span>Tốc độ giải</span><b id="dfps">0 fps</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
   <div id="result"></div>
-  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. Càng gần (vẫn đủ 4 góc) + càng nét càng nhanh. Tựa máy vào vật gì đó cho đỡ rung.</div>
+  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. Càng gần (vẫn đủ 4 góc) + càng nét càng nhanh. Tựa máy vào vật gì đó cho đỡ rung. Bật <b>Debug</b> nếu khó dò để xem máy đang thấy gì.</div>
 </div>
 </div>
 
@@ -545,8 +549,8 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
     16: [[0,0,0],[128,0,0],[0,128,0],[0,0,128],[128,128,0],[128,0,128],[0,128,128],[128,128,128],
          [255,0,0],[0,255,0],[0,0,255],[255,255,0],[255,0,255],[0,255,255],[255,128,0],[255,255,255]]
   };
-  var FS = 6;   // ô vuông mốc 6x6
-  var QZ = 2;   // vành trắng cách ly 2 ô
+  var FS = 9;   // ô vuông mốc 9x9 (to hơn hẳn ô data -> lọc theo kích thước)
+  var QZ = 3;   // vành trắng cách ly 3 ô
   var CAL = 3;  // 3 hàng canh màu
 
   function log2(n){ return Math.round(Math.log(n)/Math.log(2)); }
@@ -648,8 +652,11 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
     function put(r,c,rgb){ var o=(r*N+c)*3; grid[o]=rgb[0]; grid[o+1]=rgb[1]; grid[o+2]=rgb[2]; }
     for (var i=0;i<N*N;i++){ grid[i*3]=255; grid[i*3+1]=255; grid[i*3+2]=255; }
     var BLK=[0,0,0];
-    // vẽ reserved: square=đen, quiet=trắng (đã là trắng)
-    for (var kk in geom.reserved){ var rc=+kk; var r=(rc/N)|0, c=rc%N; if(geom.reserved[kk].sq!=null) put(r,c,BLK); }
+    // mốc = ô vuông đen ĐẶC (bền khi nhoè); vành trắng QZ cách ly với data
+    var sqc=[[0,0],[0,N-FS],[N-FS,N-FS],[N-FS,0]];
+    for (var sm=0;sm<4;sm++){ var sr=sqc[sm][0], sc2=sqc[sm][1];
+      for (var dr=0;dr<FS;dr++) for (var dc=0;dc<FS;dc++) put(sr+dr, sc2+dc, BLK);
+    }
     for (var q=0;q<geom.calib.length;q++){ var cl=geom.calib[q]; put(cl.r,cl.c,pal[cl.p]); }
     for (var t=0;t<geom.data.length;t++){ put(geom.data[t][0],geom.data[t][1],pal[syms[t]]); }
     return grid;
@@ -679,128 +686,89 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 })(typeof self!=="undefined"?self:this);
 
 /* ==== grid_decode.js ==== */
-/* Dò 4 ô vuông mốc bằng connected-components -> homography -> lấy mẫu.
-   imgData = {data:Uint8ClampedArray(RGBA), width, height} */
+/* Dò 4 ô vuông ĐẶC bằng connected-components + lọc hình dạng (đặc, vuông, to, tương đồng, tứ giác lồi).
+   Loại viền màn hình (khối rỗng) & vật tối lẻ. imgData={data:RGBA,width,height} */
 (function (root) {
   "use strict";
-
   function prep(img, maxDim){
-    var W=img.width, H=img.height, data=img.data;
+    var W=img.width,H=img.height,data=img.data;
     var scale=Math.min(1, maxDim/Math.max(W,H));
     var sw=Math.max(1,Math.round(W*scale)), sh=Math.max(1,Math.round(H*scale));
     var lum=new Float32Array(sw*sh);
-    for (var y=0;y<sh;y++){ var sy=Math.min(H-1,(y/scale)|0);
-      for (var x=0;x<sw;x++){ var sx=Math.min(W-1,(x/scale)|0); var o=(sy*W+sx)*4;
-        lum[y*sw+x]=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2]; } }
+    for(var y=0;y<sh;y++){var sy=Math.min(H-1,(y/scale)|0);for(var x=0;x<sw;x++){var sx=Math.min(W-1,(x/scale)|0);var o=(sy*W+sx)*4;lum[y*sw+x]=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];}}
     var I=new Float64Array((sw+1)*(sh+1));
-    for (var yy=1;yy<=sh;yy++){ var rs=0; for (var xx=1;xx<=sw;xx++){ rs+=lum[(yy-1)*sw+(xx-1)]; I[yy*(sw+1)+xx]=I[(yy-1)*(sw+1)+xx]+rs; } }
-    var win=Math.max(8, Math.round(Math.min(sw,sh)/10));
+    for(var yy=1;yy<=sh;yy++){var rs=0;for(var xx=1;xx<=sw;xx++){rs+=lum[(yy-1)*sw+(xx-1)];I[yy*(sw+1)+xx]=I[(yy-1)*(sw+1)+xx]+rs;}}
+    var win=Math.max(10,Math.round(Math.min(sw,sh)/9));
     var dark=new Uint8Array(sw*sh);
-    for (var y2=0;y2<sh;y2++){ var y1=Math.max(0,y2-win), y3=Math.min(sh-1,y2+win);
-      for (var x2=0;x2<sw;x2++){ var x1=Math.max(0,x2-win), x3=Math.min(sw-1,x2+win);
-        var area=(x3-x1+1)*(y3-y1+1);
-        var sum=I[(y3+1)*(sw+1)+(x3+1)]-I[y1*(sw+1)+(x3+1)]-I[(y3+1)*(sw+1)+x1]+I[y1*(sw+1)+x1];
-        dark[y2*sw+x2]= (lum[y2*sw+x2]*area < sum - 8*area) ? 1 : 0; } }
-    return {dark:dark, sw:sw, sh:sh, scale:scale, lum:lum};
+    for(var y2=0;y2<sh;y2++){var y1=Math.max(0,y2-win),y3=Math.min(sh-1,y2+win);for(var x2=0;x2<sw;x2++){var x1=Math.max(0,x2-win),x3=Math.min(sw-1,x2+win);var area=(x3-x1+1)*(y3-y1+1);var sum=I[(y3+1)*(sw+1)+(x3+1)]-I[y1*(sw+1)+(x3+1)]-I[(y3+1)*(sw+1)+x1]+I[y1*(sw+1)+x1];dark[y2*sw+x2]=(lum[y2*sw+x2]*area<sum-9*area)?1:0;}}
+    return {dark:dark,sw:sw,sh:sh,scale:scale};
   }
+  function components(p){
+    var sw=p.sw,sh=p.sh,dark=p.dark,visited=new Uint8Array(sw*sh),stack=new Int32Array(sw*sh),comps=[];
+    for(var i=0;i<sw*sh;i++){
+      if(visited[i]||!dark[i])continue;
+      var sp=0;stack[sp++]=i;visited[i]=1;var area=0,sumx=0,sumy=0,minx=1e9,maxx=-1,miny=1e9,maxy=-1,touch=false;
+      while(sp>0){var q=stack[--sp],px=q%sw,py=(q/sw)|0;area++;sumx+=px;sumy+=py;if(px<minx)minx=px;if(px>maxx)maxx=px;if(py<miny)miny=py;if(py>maxy)maxy=py;if(px===0||py===0||px===sw-1||py===sh-1)touch=true;
+        if(px>0){var a=q-1;if(!visited[a]&&dark[a]){visited[a]=1;stack[sp++]=a;}}if(px<sw-1){var b=q+1;if(!visited[b]&&dark[b]){visited[b]=1;stack[sp++]=b;}}if(py>0){var c=q-sw;if(!visited[c]&&dark[c]){visited[c]=1;stack[sp++]=c;}}if(py<sh-1){var d=q+sw;if(!visited[d]&&dark[d]){visited[d]=1;stack[sp++]=d;}}}
+      if(touch)continue;var bw=maxx-minx+1,bh=maxy-miny+1;comps.push({area:area,x:sumx/area,y:sumy/area,bw:bw,bh:bh,fill:area/(bw*bh),aspect:Math.min(bw,bh)/Math.max(bw,bh)});
+    }
+    return comps;
+  }
+  function cross(o,a,b){return (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);}
+  function dist2(a,b){var dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;}
+  function isConvexQuad(P){var s=0;for(var i=0;i<4;i++){var o=P[i],a=P[(i+1)%4],b=P[(i+2)%4];var c=cross(o,a,b);var sg=c>0?1:-1;if(i===0)s=sg;else if(sg!==s)return false;}return true;}
+  function pickCorners(cand){function pick(fn){var best=cand[0];for(var i=1;i<cand.length;i++)if(fn(cand[i])<fn(best))best=cand[i];return best;}return [pick(c=>c.x+c.y),pick(c=>-(c.x-c.y)),pick(c=>-(c.x+c.y)),pick(c=>c.x-c.y)];}
 
-  // dò 4 ô vuông: trả về [TL,TR,BR,BL] điểm ảnh full-res, hoặc null
-  function detectQuad(img){
-    var p=prep(img, 420);
-    var sw=p.sw, sh=p.sh, dark=p.dark;
-    var visited=new Uint8Array(sw*sh);
-    var stack=new Int32Array(sw*sh);
-    var comps=[];
-    for (var i=0;i<sw*sh;i++){
-      if (visited[i]||!dark[i]) continue;
-      var sp=0; stack[sp++]=i; visited[i]=1;
-      var area=0, sumx=0, sumy=0, touch=false;
-      while(sp>0){
-        var q=stack[--sp]; var px=q%sw, py=(q/sw)|0;
-        area++; sumx+=px; sumy+=py;
-        if (px===0||py===0||px===sw-1||py===sh-1) touch=true;
-        if(px>0){var a=q-1; if(!visited[a]&&dark[a]){visited[a]=1;stack[sp++]=a;}}
-        if(px<sw-1){var b=q+1; if(!visited[b]&&dark[b]){visited[b]=1;stack[sp++]=b;}}
-        if(py>0){var c=q-sw; if(!visited[c]&&dark[c]){visited[c]=1;stack[sp++]=c;}}
-        if(py<sh-1){var d=q+sw; if(!visited[d]&&dark[d]){visited[d]=1;stack[sp++]=d;}}
-      }
-      if (!touch && area>=Math.max(9,(sw*sh)*0.0006)) comps.push({area:area, x:sumx/area, y:sumy/area});
+  function quadArea(P){return Math.abs(cross(P[0],P[1],P[2]))/2+Math.abs(cross(P[0],P[2],P[3]))/2;}
+  function detectQuads(img, maxN){
+    maxN=maxN||6;
+    var p=prep(img,520);var comps=components(p);if(comps.length<4)return [];
+    var sw=p.sw,sh=p.sh,minArea=Math.max(14,(sw*sh)*0.0003);
+    var sq=comps.filter(c=>c.area>=minArea&&c.fill>=0.58&&c.aspect>=0.58);
+    var pool=sq.length>=4?sq:comps.filter(c=>c.area>=minArea);
+    if(pool.length<4)pool=comps.slice();
+    pool.sort((a,b)=>b.area-a.area);
+    var cand=pool.slice(0,Math.min(18,pool.length));
+    function valid(P){
+      for(var a=0;a<4;a++)for(var b=a+1;b<4;b++)if(P[a]===P[b])return false;
+      if(!isConvexQuad(P))return false;
+      var d=[Math.sqrt(dist2(P[0],P[1])),Math.sqrt(dist2(P[1],P[2])),Math.sqrt(dist2(P[2],P[3])),Math.sqrt(dist2(P[3],P[0]))];
+      var mn=Math.min.apply(null,d),mx=Math.max.apply(null,d);if(mn<mx*0.30)return false;
+      if(quadArea(P)<sw*sh*0.006)return false;
+      var sa=[P[0].area,P[1].area,P[2].area,P[3].area],smn=Math.min.apply(null,sa),smx=Math.max.apply(null,sa);if(smn<smx*0.18)return false;
+      return true;
     }
-    if (comps.length<4) return null;
-    var cand=comps; // chọn theo vị trí góc, không lọc theo area (ô vuông luôn sát góc nhất)
-    // 4 góc ảnh
-    var corners=[[0,0],[sw,0],[sw,sh],[0,sh]];
-    var chosen=[null,null,null,null], usedIdx=[-1,-1,-1,-1];
-    for (var k=0;k<4;k++){
-      var best=-1, bd=1e18;
-      for (var j=0;j<cand.length;j++){
-        var used=false; for(var u=0;u<4;u++) if(usedIdx[u]===j) used=true; if(used) continue;
-        var dx=cand[j].x-corners[k][0], dy=cand[j].y-corners[k][1]; var dd=dx*dx+dy*dy;
-        if (dd<bd){ bd=dd; best=j; }
-      }
-      if (best<0) return null;
-      usedIdx[k]=best; chosen[k]=cand[best];
+    // gom tất cả tứ giác hợp lệ, sắp theo diện tích giảm dần, lấy các cái KHÁC NHAU
+    var all=[]; var qp=pickCorners(cand); if(valid(qp))all.push(qp);
+    var L=Math.min(cand.length,16);
+    for(var i=0;i<L;i++)for(var j=i+1;j<L;j++)for(var k=j+1;k<L;k++)for(var m=k+1;m<L;m++){
+      var P4=pickCorners([cand[i],cand[j],cand[k],cand[m]]);if(valid(P4))all.push(P4);
     }
-    // refine sub-pixel: trọng tâm pixel tối quanh centroid (cửa sổ ~ cạnh ô vuông)
+    if(!all.length)return [];
+    all.sort((a,b)=>quadArea(b)-quadArea(a));
+    var picked=[], sigs=[];
+    for(var t=0;t<all.length&&picked.length<maxN;t++){
+      var P=all[t]; var sig=P.map(c=>((c.x*7|0))+','+((c.y*7|0))).sort().join(';');
+      var dup=false; for(var u=0;u<sigs.length;u++){ // gần trùng?
+        var A=picked[u], close=0; for(var z=0;z<4;z++){var dx=P[z].x-A[z].x,dy=P[z].y-A[z].y;if(dx*dx+dy*dy<9)close++;} if(close>=3){dup=true;break;} }
+      if(dup)continue; picked.push(P); sigs.push(sig);
+    }
     var s=1/p.scale;
-    function refine(cx,cy,sidePx){
-      var W=img.width,H=img.height,data=img.data;
-      var rad=sidePx*0.6;
-      var x0=Math.max(0,Math.floor(cx-rad)),x1=Math.min(W-1,Math.ceil(cx+rad));
-      var y0=Math.max(0,Math.floor(cy-rad)),y1=Math.min(H-1,Math.ceil(cy+rad));
-      var mean=0,n=0;
-      for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){var o=(y*W+x)*4;mean+=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];n++;}
-      if(!n)return [cx,cy]; mean/=n; var th=mean*0.7;
-      var sx=0,sy=0,swt=0;
-      for(var y2=y0;y2<=y1;y2++)for(var x2=x0;x2<=x1;x2++){var o2=(y2*W+x2)*4;var l=0.299*data[o2]+0.587*data[o2+1]+0.114*data[o2+2];if(l<th){var w=th-l;sx+=x2*w;sy+=y2*w;swt+=w;}}
-      if(swt<=0)return [cx,cy]; return [sx/swt,sy/swt];
-    }
-    var out=[];
-    for (var m=0;m<4;m++){
-      var cx=chosen[m].x*s, cy=chosen[m].y*s;
-      var sidePx=Math.sqrt(chosen[m].area)*s;
-      out.push(refine(cx,cy,sidePx));
-    }
-    return out; // [TL,TR,BR,BL]
+    function refine(cx,cy,sidePx){var W=img.width,H=img.height,data=img.data,rad=sidePx*0.6;var x0=Math.max(0,Math.floor(cx-rad)),x1=Math.min(W-1,Math.ceil(cx+rad)),y0=Math.max(0,Math.floor(cy-rad)),y1=Math.min(H-1,Math.ceil(cy+rad));var mean=0,n=0;for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){var o=(y*W+x)*4;mean+=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];n++;}if(!n)return[cx,cy];mean/=n;var th=mean*0.7,sx=0,sy=0,swt=0;for(var y2=y0;y2<=y1;y2++)for(var x2=x0;x2<=x1;x2++){var o2=(y2*W+x2)*4;var l=0.299*data[o2]+0.587*data[o2+1]+0.114*data[o2+2];if(l<th){var w=th-l;sx+=x2*w;sy+=y2*w;swt+=w;}}if(swt<=0)return[cx,cy];return[sx/swt,sy/swt];}
+    return picked.map(P=>P.map(c=>refine(c.x*s,c.y*s,Math.sqrt(c.area)*s)));
   }
+  function detectQuad(img){var qs=detectQuads(img,1);return qs.length?qs[0]:null;}
+  // trả về mask nhị phân (để debug hiển thị)
+  function debugMask(img,maxDim){var p=prep(img,maxDim||360);return {dark:p.dark,sw:p.sw,sh:p.sh};}
 
-  function solve8(A,b){
-    var n=8;
-    for (var col=0;col<n;col++){
-      var piv=col; for (var r=col+1;r<n;r++) if(Math.abs(A[r][col])>Math.abs(A[piv][col]))piv=r;
-      if (Math.abs(A[piv][col])<1e-9) return null;
-      var t=A[col];A[col]=A[piv];A[piv]=t; var tb=b[col];b[col]=b[piv];b[piv]=tb;
-      var d=A[col][col]; for (var c=col;c<n;c++)A[col][c]/=d; b[col]/=d;
-      for (var r2=0;r2<n;r2++){ if(r2===col)continue; var f=A[r2][col]; if(f===0)continue; for(var c2=col;c2<n;c2++)A[r2][c2]-=f*A[col][c2]; b[r2]-=f*b[col]; }
-    }
-    return b;
-  }
-  function solveHomography(src,dst){
-    var A=[],b=[];
-    for (var i=0;i<4;i++){ var x=src[i][0],y=src[i][1],X=dst[i][0],Y=dst[i][1];
-      A.push([x,y,1,0,0,0,-x*X,-y*X]); b.push(X);
-      A.push([0,0,0,x,y,1,-x*Y,-y*Y]); b.push(Y); }
-    var h=solve8(A,b); if(!h)return null;
-    return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];
-  }
-  function applyH(H,x,y){ var d=H[6]*x+H[7]*y+H[8]; return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d]; }
-  function sampleAt(img,x,y){
-    var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;
-    for (var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}
-    return n?[R/n,G/n,B/n]:[0,0,0];
-  }
-  function sampleGrid(img,H,geom){
-    var N=geom.N,cells=new Uint8ClampedArray(N*N*3);
-    for (var r=0;r<N;r++)for(var c=0;c<N;c++){ var pnt=applyH(H,c,r); var rgb=sampleAt(img,pnt[0],pnt[1]); var o=(r*N+c)*3; cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2]; }
-    var P=geom.P,sum=[]; for(var i=0;i<P;i++)sum.push([0,0,0,0]);
-    for (var q=0;q<geom.calib.length;q++){ var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3; var st=sum[cl.p]; st[0]+=cells[o2];st[1]+=cells[o2+1];st[2]+=cells[o2+2];st[3]++; }
-    var cent=[]; for(var p2=0;p2<P;p2++){var s2=sum[p2];cent.push(s2[3]?[s2[0]/s2[3],s2[1]/s2[3],s2[2]/s2[3]]:[0,0,0]);}
-    return {cells:cells,centroids:cent};
-  }
+  function solve8(A,b){var n=8;for(var col=0;col<n;col++){var piv=col;for(var r=col+1;r<n;r++)if(Math.abs(A[r][col])>Math.abs(A[piv][col]))piv=r;if(Math.abs(A[piv][col])<1e-9)return null;var t=A[col];A[col]=A[piv];A[piv]=t;var tb=b[col];b[col]=b[piv];b[piv]=tb;var d=A[col][col];for(var c=col;c<n;c++)A[col][c]/=d;b[col]/=d;for(var r2=0;r2<n;r2++){if(r2===col)continue;var f=A[r2][col];if(f===0)continue;for(var c2=col;c2<n;c2++)A[r2][c2]-=f*A[col][c2];b[r2]-=f*b[col];}}return b;}
+  function solveHomography(src,dst){var A=[],b=[];for(var i=0;i<4;i++){var x=src[i][0],y=src[i][1],X=dst[i][0],Y=dst[i][1];A.push([x,y,1,0,0,0,-x*X,-y*X]);b.push(X);A.push([0,0,0,x,y,1,-x*Y,-y*Y]);b.push(Y);}var h=solve8(A,b);if(!h)return null;return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];}
+  function applyH(H,x,y){var d=H[6]*x+H[7]*y+H[8];return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d];}
+  function sampleAt(img,x,y){var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}return n?[R/n,G/n,B/n]:[0,0,0];}
+  function sampleGrid(img,H,geom){var N=geom.N,cells=new Uint8ClampedArray(N*N*3);for(var r=0;r<N;r++)for(var c=0;c<N;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*N+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}var P=geom.P,sum=[];for(var i=0;i<P;i++)sum.push([0,0,0,0]);for(var q=0;q<geom.calib.length;q++){var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3;var st=sum[cl.p];st[0]+=cells[o2];st[1]+=cells[o2+1];st[2]+=cells[o2+2];st[3]++;}var cent=[];for(var p2=0;p2<P;p2++){var s2=sum[p2];cent.push(s2[3]?[s2[0]/s2[3],s2[1]/s2[3],s2[2]/s2[3]]:[0,0,0]);}return {cells:cells,centroids:cent};}
 
-  var API={ detectQuad:detectQuad, solveHomography:solveHomography, applyH:applyH, sampleGrid:sampleGrid, prep:prep };
-  if (typeof module==="object"&&module.exports) module.exports=API;
-  else root.GridDecode=API;
+  var API={detectQuad:detectQuad,detectQuads:detectQuads,solveHomography:solveHomography,applyH:applyH,sampleGrid:sampleGrid,prep:prep,debugMask:debugMask};
+  if(typeof module==="object"&&module.exports)module.exports=API;else root.GridDecode=API;
 })(typeof self!=="undefined"?self:this);
 </script>
 <script>
@@ -813,19 +781,19 @@ const v=$('v'), ov=$('ov');
 const cap=document.createElement('canvas');
 let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
 let fcount=0, lastT=performance.now(), lastName='received.bin';
+let lastCenter=null, misses=0;   // bám vị trí theo thời gian
 
 $('cam').onclick=async()=>{
   if(running){ stop(); return; }
   try{
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
     v.srcObject=stream; await v.play();
-    // khoá nét/phơi sáng/cân bằng trắng liên tục nếu máy hỗ trợ
     try{const tr=stream.getVideoTracks()[0];const caps=tr.getCapabilities?tr.getCapabilities():{};const adv=[];
       if(caps.focusMode&&caps.focusMode.includes('continuous'))adv.push({focusMode:'continuous'});
       if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
-    decoder=new C.Decoder(); geomS=null; cfgKey=''; decoded=false; lastName='received.bin';
+    decoder=new C.Decoder(); geomS=null; cfgKey=''; decoded=false; lastName='received.bin'; lastCenter=null; misses=0;
     $('cfg').textContent='đang dò…'; $('cfg').className='badge wait';
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
     $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
@@ -833,15 +801,8 @@ $('cam').onclick=async()=>{
 };
 function stop(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}$('cam').textContent='Bật camera';}
 
-function tryBeacon(logical){
-  if(logical && logical.length>=5 && logical[0]===0xBE && logical[1]===0xAC){
-    const N=logical[2],P=logical[3],ns=logical[4], key=N+'/'+P+'/'+ns;
-    if(key!==cfgKey){ cfgKey=key; geomS=G.makeGeometry(N,P,ns);
-      $('cfg').textContent='lưới '+N+'×'+N+', '+P+' màu'; $('cfg').className='badge on'; }
-    return true;
-  }
-  return false;
-}
+function centerOf(q){let sx=0,sy=0;for(const p of q){sx+=p[0];sy+=p[1];}return [sx/4,sy/4];}
+function setConfig(N,P,ns){const key=N+'/'+P+'/'+ns;if(key!==cfgKey){cfgKey=key;geomS=G.makeGeometry(N,P,ns);$('cfg').textContent='lưới '+N+'×'+N+', '+P+' màu';$('cfg').className='badge on';}}
 
 function loop(){
   if(!running) return;
@@ -852,33 +813,39 @@ function loop(){
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
     const img=cx.getImageData(0,0,cw,ch);
-    let quad=null; try{ quad=D.detectQuad(img); }catch(e){}
-    drawOverlay(quad,cw,ch);
-    if(quad){
-      $('det').textContent='thấy 4 góc'; $('det').className='badge on';
-      let handled=false;
-      // đã có cấu hình -> thử giải data (homography theo geomS: tâm mốc = N-3.5)
+
+    let quads=[]; try{ quads=D.detectQuads(img,6)||[]; }catch(e){}
+    // ưu tiên quad gần vị trí lần trước (bám code, bỏ rác); nếu chưa có thì theo diện tích (đã sắp sẵn)
+    if(lastCenter && quads.length>1){ quads=quads.slice().sort((a,b)=>{
+      const ca=centerOf(a),cb=centerOf(b);
+      return (Math.hypot(ca[0]-lastCenter[0],ca[1]-lastCenter[1]))-(Math.hypot(cb[0]-lastCenter[0],cb[1]-lastCenter[1])); }); }
+
+    let usedQuad=null, gotData=false;
+    for(let qi=0;qi<quads.length;qi++){
+      const q=quads[qi];
+      // đã có cấu hình -> thử giải data
       if(geomS){
-        const Hs=D.solveHomography(geomS.markers.centers, quad);
-        if(Hs){ const smpS=D.sampleGrid(img,Hs,geomS);
-          let lg=null; try{ lg=G.decodeSampled(smpS.cells,smpS.centroids,geomS);}catch(e){}
+        const Hs=D.solveHomography(geomS.markers.centers,q);
+        if(Hs){ const smp=D.sampleGrid(img,Hs,geomS); let lg=null; try{lg=G.decodeSampled(smp.cells,smp.centroids,geomS);}catch(e){}
           if(lg){ const info=C.parseFrame(lg);
-            if(info){ handled=true;
+            if(info){ usedQuad=q;
               if(info.type===C.TYPE_META){ decoder.addMeta(info); if(info.name)lastName=info.name; $('fname').textContent=info.name||lastName; }
-              else{ const s=decoder.addData(info); updateProgress(s); if(s.done&&!decoded){decoded=true;finish(s);} }
+              else{ const s=decoder.addData(info); gotData=true; updateProgress(s); if(s.done&&!decoded){decoded=true;finish(s);} }
+              break;
             }
           }
         }
       }
-      // chưa xử lý được -> thử beacon (homography theo geomB) để (tái) khoá cấu hình
-      if(!handled){
-        const Hb=D.solveHomography(geomB.markers.centers, quad);
-        if(Hb){ const smpB=D.sampleGrid(img,Hb,geomB);
-          let lb=null; try{ lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
-          tryBeacon(lb);
-        }
+      // thử beacon để (tái) khoá cấu hình
+      const Hb=D.solveHomography(geomB.markers.centers,q);
+      if(Hb){ const smpB=D.sampleGrid(img,Hb,geomB); let lb=null; try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
+        if(lb&&lb.length>=5&&lb[0]===0xBE&&lb[1]===0xAC){ setConfig(lb[2],lb[3],lb[4]); usedQuad=q; break; }
       }
-    } else { $('det').textContent='chưa thấy'; $('det').className='badge'; }
+    }
+    if(usedQuad){ lastCenter=centerOf(usedQuad); misses=0; $('det').textContent='đang giải'; $('det').className='badge on'; }
+    else { misses++; if(misses>25)lastCenter=null; $('det').textContent=quads.length?'thấy '+quads.length+' vùng':'chưa thấy'; $('det').className=quads.length?'badge wait':'badge'; }
+
+    drawOverlay(img,quads,usedQuad,cw,ch);
     fcount++; const now=performance.now(); if(now-lastT>500){$('dfps').textContent=Math.round(fcount*1000/(now-lastT))+' fps';fcount=0;lastT=now;}
   }
   requestAnimationFrame(loop);
@@ -886,19 +853,27 @@ function loop(){
 
 function updateProgress(s){ if(!s)return; const pct=Math.min(100,Math.round(s.known/s.K*100));
   $('pi').style.width=pct+'%'; $('prog').textContent=s.known+' / '+s.K+' block'; if(s.name)$('fname').textContent=s.name;}
-
 function finish(s){
   const blob=new Blob([s.bytes],{type:'application/octet-stream'});
   const url=URL.createObjectURL(blob); const name=(s.name||lastName).replace(/[\/\\"]/g,'_');
   const crc=s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC sai — thử lại</span>':'');
   $('result').innerHTML='<div style="margin-top:8px" class="stat"><span>Hoàn tất</span>'+crc+'</div>'+
     '<a class="dl" download="'+name+'" href="'+url+'">⬇️ Tải '+name+'</a>';
-  const a=$('result').querySelector('a'); if(a)a.click();
-  $('pi').style.width='100%';
+  const a=$('result').querySelector('a'); if(a)a.click(); $('pi').style.width='100%';
 }
-function drawOverlay(quad,cw,ch){ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
-  if(!quad)return;g.lineWidth=Math.max(2,cw/200);g.strokeStyle='#31d07a';g.beginPath();
-  g.moveTo(quad[0][0],quad[0][1]);for(let i=1;i<4;i++)g.lineTo(quad[i][0],quad[i][1]);g.closePath();g.stroke();
-  g.fillStyle='#3ea6ff';for(const p of quad){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}}
+function drawOverlay(img,quads,used,cw,ch){
+  ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
+  if($('dbg').checked){ // vẽ mask nhị phân mờ để soi
+    try{const m=D.debugMask(img,360);const off=document.createElement('canvas');off.width=m.sw;off.height=m.sh;
+      const id=off.getContext('2d').createImageData(m.sw,m.sh);for(let i=0;i<m.sw*m.sh;i++){const d=m.dark[i]?0:255;id.data[i*4]=d;id.data[i*4+1]=d;id.data[i*4+2]=d;id.data[i*4+3]=110;}
+      off.getContext('2d').putImageData(id,0,0);g.imageSmoothingEnabled=false;g.drawImage(off,0,0,m.sw,m.sh,0,0,cw,ch);}catch(e){}
+    g.strokeStyle='rgba(255,180,0,.9)';g.lineWidth=Math.max(1,cw/300);
+    for(const q of quads){g.beginPath();g.moveTo(q[0][0],q[0][1]);for(let i=1;i<4;i++)g.lineTo(q[i][0],q[i][1]);g.closePath();g.stroke();}
+  }
+  const q=used||(quads.length?quads[0]:null); if(!q)return;
+  g.lineWidth=Math.max(2,cw/200);g.strokeStyle=used?'#31d07a':'#3ea6ff';g.beginPath();
+  g.moveTo(q[0][0],q[0][1]);for(let i=1;i<4;i++)g.lineTo(q[i][0],q[i][1]);g.closePath();g.stroke();
+  g.fillStyle=used?'#31d07a':'#3ea6ff';for(const p of q){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}
+}
 </script>
 </body></html>
