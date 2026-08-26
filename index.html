@@ -23,6 +23,8 @@ video{width:100%;display:block}
 .rowb{display:flex;gap:8px;align-items:center;margin-top:8px}
 label.ck{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-weight:700;padding:12px;border-radius:10px;text-decoration:none;margin-top:8px}
+select{font-size:14px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f151d;color:var(--fg);min-width:0}
+button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
@@ -30,8 +32,13 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 
 <div class="card">
   <button id="cam">Bật camera</button>
-  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge wait">đang dò…</span></div>
+  <div class="rowb">
+    <select id="manualPreset" style="flex:1" aria-label="Chọn preset thủ công"></select>
+    <button id="applyPreset" class="sec mini">Áp dụng tay</button>
+  </div>
+  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng (mặc định)</span></div>
     <label class="ck"><input type="checkbox" id="dbg"> Debug (xem máy thấy gì)</label></div>
+  <div class="hint" style="margin-top:6px">Receiver luôn khởi động bằng <b>Cân bằng</b>. Beacon chỉ tự đổi cấu hình khi bên gửi dùng preset khác; nếu beacon khó đọc, có thể chọn preset thủ công ở trên.</div>
 </div>
 
 <div class="card">
@@ -42,7 +49,7 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
   <div class="stat"><span>Tốc độ giải</span><b id="dfps">0 fps</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
   <div id="result"></div>
-  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. Càng gần (vẫn đủ 4 góc) + càng nét càng nhanh. Tựa máy vào vật gì đó cho đỡ rung. Bật <b>Debug</b> nếu khó dò để xem máy đang thấy gì.</div>
+  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. <b>Nếu ảnh mờ hoặc mãi không đọc được: LÙI RA XA HƠN cho tới khi nét</b> — camera điện thoại không nét khi để quá sát. Tựa máy vào vật gì đó cho đỡ rung. Bảo bên gửi để mức <b>Chắc ăn</b> và hạ FPS nếu vẫn khó.</div>
 </div>
 </div>
 
@@ -323,26 +330,32 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
     return out;
   }
   function parseFrame(bytes) {
-    if (bytes.length < 4 || bytes[0]!==MAGIC0 || bytes[1]!==MAGIC1) return null;
+    // Chỉ chấp nhận đúng magic + version hiện tại. Tránh một frame rác/mã cũ lọt vào decoder.
+    if (bytes.length < 4 || bytes[0]!==MAGIC0 || bytes[1]!==MAGIC1 || bytes[2]!==VERSION) return null;
     var type = bytes[3];
     if (type===TYPE_DATA) {
       if (bytes.length < HDR_DATA) return null;
+      var blockSize = readU16(bytes,12);
+      if (blockSize < 1 || bytes.length !== HDR_DATA + blockSize) return null;
       return {
         type: TYPE_DATA,
         fileId: readU32(bytes,4), fileSize: readU32(bytes,8),
-        blockSize: readU16(bytes,12), seed: readU32(bytes,14),
+        blockSize: blockSize, seed: readU32(bytes,14),
         payload: bytes.subarray(HDR_DATA)
       };
     } else if (type===TYPE_META) {
       if (bytes.length < 19) return null;
+      var metaBlockSize = readU16(bytes,12);
       var nlen = bytes[18];
+      // META do packMetaFrame tạo ra có đúng 19+nlen byte. Không nhận META cụt/thừa.
+      if (metaBlockSize < 1 || bytes.length !== 19 + nlen) return null;
       var name = "";
       try { name = decodeURIComponent(escape(bytesToLatin1(bytes.subarray(19,19+nlen)))); }
       catch(e){ name = bytesToLatin1(bytes.subarray(19,19+nlen)); }
       return {
         type: TYPE_META,
         fileId: readU32(bytes,4), fileSize: readU32(bytes,8),
-        blockSize: readU16(bytes,12), crc: readU32(bytes,14), name: name
+        blockSize: metaBlockSize, crc: readU32(bytes,14), name: name
       };
     }
     return null;
@@ -773,6 +786,13 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 </script>
 <script>
 const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
+const PRESETS={
+  'an-toan':{N:60,P:8,nsym:48,label:'An toàn'},
+  'can-bang':{N:76,P:8,nsym:40,label:'Cân bằng'},
+  'nhanh':{N:84,P:8,nsym:40,label:'Nhanh'},
+  'cuc-nhanh':{N:88,P:16,nsym:56,label:'Cực nhanh'}
+};
+const DEFAULT_PRESET='can-bang';
 const BEACON={N:40,P:8,nsym:48};
 const geomB=G.makeGeometry(BEACON.N,BEACON.P,BEACON.nsym);
 const $=id=>document.getElementById(id);
@@ -782,6 +802,32 @@ const cap=document.createElement('canvas');
 let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
 let fcount=0, lastT=performance.now(), lastName='received.bin';
 let lastCenter=null, misses=0;   // bám vị trí theo thời gian
+
+const manualPreset=$('manualPreset');
+Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;manualPreset.appendChild(o);});
+manualPreset.value=DEFAULT_PRESET;
+
+function presetKeyFromConfig(N,P,ns){
+  for(const k of Object.keys(PRESETS)){const p=PRESETS[k];if(p.N===N&&p.P===P&&p.nsym===ns)return k;}
+  return null;
+}
+function setConfig(N,P,ns,source){
+  const presetKey=presetKeyFromConfig(N,P,ns);
+  if(!presetKey) return false; // beacon lạ/hỏng: bỏ qua, không phá cấu hình đang chạy
+  const key=N+'/'+P+'/'+ns;
+  if(key!==cfgKey || !geomS){cfgKey=key;geomS=G.makeGeometry(N,P,ns);}
+  manualPreset.value=presetKey;
+  const p=PRESETS[presetKey];
+  const src=source==='beacon'?'beacon':(source==='manual'?'chọn tay':'mặc định');
+  $('cfg').textContent=p.label+' — '+N+'×'+N+', '+P+' màu ('+src+')';
+  $('cfg').className='badge on';
+  return true;
+}
+function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];return setConfig(p.N,p.P,p.nsym,source);}
+
+// QUAN TRỌNG: có cấu hình dùng được ngay cả khi chưa bao giờ đọc được beacon.
+applyPreset(DEFAULT_PRESET,'default');
+$('applyPreset').onclick=()=>applyPreset(manualPreset.value,'manual');
 
 $('cam').onclick=async()=>{
   if(running){ stop(); return; }
@@ -793,8 +839,9 @@ $('cam').onclick=async()=>{
       if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
-    decoder=new C.Decoder(); geomS=null; cfgKey=''; decoded=false; lastName='received.bin'; lastCenter=null; misses=0;
-    $('cfg').textContent='đang dò…'; $('cfg').className='badge wait';
+    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; misses=0;
+    // Mỗi phiên camera bắt đầu ở Cân bằng; beacon có thể override, chọn tay luôn khả dụng.
+    cfgKey=''; geomS=null; manualPreset.value=DEFAULT_PRESET; applyPreset(DEFAULT_PRESET,'default');
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
     $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
   }catch(e){ alert('Không mở được camera: '+e.message+'\nHãy dùng HTTPS (GitHub Pages) và cấp quyền camera.'); }
@@ -802,7 +849,6 @@ $('cam').onclick=async()=>{
 function stop(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}$('cam').textContent='Bật camera';}
 
 function centerOf(q){let sx=0,sy=0;for(const p of q){sx+=p[0];sy+=p[1];}return [sx/4,sy/4];}
-function setConfig(N,P,ns){const key=N+'/'+P+'/'+ns;if(key!==cfgKey){cfgKey=key;geomS=G.makeGeometry(N,P,ns);$('cfg').textContent='lưới '+N+'×'+N+', '+P+' màu';$('cfg').className='badge on';}}
 
 function loop(){
   if(!running) return;
@@ -828,10 +874,16 @@ function loop(){
         const Hs=D.solveHomography(geomS.markers.centers,q);
         if(Hs){ const smp=D.sampleGrid(img,Hs,geomS); let lg=null; try{lg=G.decodeSampled(smp.cells,smp.centroids,geomS);}catch(e){}
           if(lg){ const info=C.parseFrame(lg);
-            if(info){ usedQuad=q;
-              if(info.type===C.TYPE_META){ decoder.addMeta(info); if(info.name)lastName=info.name; $('fname').textContent=info.name||lastName; }
-              else{ const s=decoder.addData(info); gotData=true; updateProgress(s); if(s.done&&!decoded){decoded=true;finish(s);} }
-              break;
+            if(info){
+              if(info.type===C.TYPE_META){
+                decoder.addMeta(info); if(info.name)lastName=info.name; $('fname').textContent=info.name||lastName;
+                usedQuad=q; break;
+              } else if(info.type===C.TYPE_DATA){
+                const s=decoder.addData(info); gotData=true; updateProgress(s);
+                if(s.done&&!decoded){decoded=true;finish(s);}
+                usedQuad=q; break;
+              }
+              // Type không hợp lệ: bỏ qua frame, tiếp tục thử beacon/quad khác.
             }
           }
         }
@@ -839,11 +891,13 @@ function loop(){
       // thử beacon để (tái) khoá cấu hình
       const Hb=D.solveHomography(geomB.markers.centers,q);
       if(Hb){ const smpB=D.sampleGrid(img,Hb,geomB); let lb=null; try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
-        if(lb&&lb.length>=5&&lb[0]===0xBE&&lb[1]===0xAC){ setConfig(lb[2],lb[3],lb[4]); usedQuad=q; break; }
+        if(lb&&lb.length===5&&lb[0]===0xBE&&lb[1]===0xAC){ if(setConfig(lb[2],lb[3],lb[4],'beacon')){ usedQuad=q; break; } }
       }
     }
     if(usedQuad){ lastCenter=centerOf(usedQuad); misses=0; $('det').textContent='đang giải'; $('det').className='badge on'; }
-    else { misses++; if(misses>25)lastCenter=null; $('det').textContent=quads.length?'thấy '+quads.length+' vùng':'chưa thấy'; $('det').className=quads.length?'badge wait':'badge'; }
+    else { misses++; if(misses>25)lastCenter=null;
+      if(quads.length && misses>12){ $('det').textContent='thấy vùng — mờ? lùi xa cho nét'; $('det').className='badge wait'; }
+      else { $('det').textContent=quads.length?'thấy '+quads.length+' vùng':'chưa thấy'; $('det').className=quads.length?'badge wait':'badge'; } }
 
     drawOverlay(img,quads,usedQuad,cw,ch);
     fcount++; const now=performance.now(); if(now-lastT>500){$('dfps').textContent=Math.round(fcount*1000/(now-lastT))+' fps';fcount=0;lastT=now;}
