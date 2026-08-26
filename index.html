@@ -1,0 +1,898 @@
+<!DOCTYPE html><html lang="vi"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Nhận file bằng camera — Optical RX</title>
+<style>
+:root{--bg:#0b0f14;--panel:#141b24;--fg:#e7edf3;--muted:#8aa0b2;--acc:#3ea6ff;--ok:#31d07a;--line:#243040}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:14px}
+h1{font-size:18px;margin:6px 0 2px}.sub{color:var(--muted);font-size:13px;margin-bottom:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
+select,button{font-size:15px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f151d;color:var(--fg);width:100%}
+button{background:var(--acc);color:#04121f;font-weight:700;border:none;cursor:pointer}
+button.sec{background:#1a2430;color:var(--fg);border:1px solid var(--line)}
+.viewwrap{position:relative;border-radius:12px;overflow:hidden;background:#000}
+video{width:100%;display:block}
+#ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.bar{height:14px;background:#0f151d;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.bar>i{display:block;height:100%;background:var(--acc);width:0%}
+.stat{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);padding:3px 0}
+.stat b{color:var(--fg)}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;background:#26313f}
+.badge.on{background:rgba(49,208,122,.15);color:var(--ok)}
+.hint{font-size:12px;color:var(--muted);line-height:1.5}
+a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-weight:700;padding:12px;border-radius:10px;text-decoration:none;margin-top:8px}
+</style></head><body>
+<div class="wrap">
+<h1>📥 Nhận file bằng camera</h1>
+<div class="sub">Chọn đúng tốc độ như bên Gửi, bấm Bật camera rồi quay vào mã màu trên màn hình kia.</div>
+
+<div class="card">
+  <label>Tốc độ (phải TRÙNG bên Gửi)</label>
+  <select id="preset"></select>
+  <div class="hint" id="presetInfo"></div>
+  <div class="row" style="margin-top:8px"><button id="cam">Bật camera</button></div>
+</div>
+
+<div class="card">
+  <div class="viewwrap"><video id="v" playsinline muted></video><canvas id="ov"></canvas></div>
+  <div style="margin:10px 0 4px" class="stat"><span>Trạng thái dò mã</span><span id="det" class="badge">chưa thấy</span></div>
+  <div class="bar"><i id="pi"></i></div>
+  <div class="stat" style="margin-top:6px"><span>Tiến độ</span><b id="prog">0 / 0 block</b></div>
+  <div class="stat"><span>Tốc độ giải</span><b id="dfps">0 fps</b></div>
+  <div class="stat"><span>File</span><b id="fname">—</b></div>
+  <div id="result"></div>
+  <div class="hint" style="margin-top:6px">Mẹo: giữ máy sao cho cả 4 ô vuông đen ở 4 góc đều nằm trong khung hình. Càng nét, càng gần (vẫn thấy đủ 4 góc) thì càng nhanh.</div>
+</div>
+</div>
+
+<script>/* ==== grid_rs.js ==== */
+/* GF(256) + Reed-Solomon — port trung thực thuật toán chuẩn (đã kiểm chứng). */
+(function (root) {
+  "use strict";
+  var EXP = new Array(512), LOG = new Array(256);
+  (function () {
+    var x = 1;
+    for (var i = 0; i < 255; i++) { EXP[i] = x; LOG[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+    for (var j = 255; j < 512; j++) EXP[j] = EXP[j - 255];
+    LOG[0] = 0;
+  })();
+  function mul(a, b) { if (a === 0 || b === 0) return 0; return EXP[LOG[a] + LOG[b]]; }
+  function div(a, b) { if (a === 0) return 0; return EXP[(LOG[a] + 255 - LOG[b]) % 255]; }
+  function pw(x, p) { var e = (LOG[x] * p) % 255; if (e < 0) e += 255; return EXP[e]; }
+  function inv(x) { return EXP[255 - LOG[x]]; }
+
+  function pScale(p, s) { var r = new Array(p.length); for (var i = 0; i < p.length; i++) r[i] = mul(p[i], s); return r; }
+  function pAdd(p, q) {
+    var r = new Array(Math.max(p.length, q.length)).fill(0);
+    for (var i = 0; i < p.length; i++) r[i + r.length - p.length] = p[i];
+    for (var j = 0; j < q.length; j++) r[j + r.length - q.length] ^= q[j];
+    return r;
+  }
+  function pMul(p, q) {
+    var r = new Array(p.length + q.length - 1).fill(0);
+    for (var i = 0; i < p.length; i++) for (var j = 0; j < q.length; j++) r[i + j] ^= mul(p[i], q[j]);
+    return r;
+  }
+  function pEval(p, x) { var y = p[0]; for (var i = 1; i < p.length; i++) y = mul(y, x) ^ p[i]; return y; }
+  function pDiv(dividend, divisor) {
+    var out = dividend.slice();
+    for (var i = 0; i < dividend.length - (divisor.length - 1); i++) {
+      var coef = out[i];
+      if (coef !== 0) for (var j = 1; j < divisor.length; j++) if (divisor[j] !== 0) out[i + j] ^= mul(divisor[j], coef);
+    }
+    var sep = out.length - (divisor.length - 1);
+    return [out.slice(0, sep), out.slice(sep)];
+  }
+
+  var _gen = {};
+  function genPoly(nsym) {
+    if (_gen[nsym]) return _gen[nsym];
+    var g = [1];
+    for (var i = 0; i < nsym; i++) g = pMul(g, [1, pw(2, i)]);
+    _gen[nsym] = g; return g;
+  }
+
+  function rsEncodeArr(msgIn, nsym) {
+    var gen = genPoly(nsym);
+    var out = msgIn.slice().concat(new Array(gen.length - 1).fill(0));
+    for (var i = 0; i < msgIn.length; i++) {
+      var coef = out[i];
+      if (coef !== 0) for (var j = 1; j < gen.length; j++) out[i + j] ^= mul(gen[j], coef);
+    }
+    for (var k = 0; k < msgIn.length; k++) out[k] = msgIn[k];
+    return out.slice(msgIn.length);
+  }
+
+  function calcSynd(msg, nsym) {
+    var s = new Array(nsym); for (var i = 0; i < nsym; i++) s[i] = pEval(msg, pw(2, i));
+    return [0].concat(s);
+  }
+  function pMax(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
+
+  function findErrLocator(synd, nsym) {
+    var errLoc = [1], oldLoc = [1];
+    var syndShift = synd.length > nsym ? synd.length - nsym : 0;
+    for (var i = 0; i < nsym; i++) {
+      var K = i + syndShift;
+      var delta = synd[K];
+      for (var j = 1; j < errLoc.length; j++) delta ^= mul(errLoc[errLoc.length - 1 - j], synd[K - j]);
+      oldLoc = oldLoc.concat([0]);
+      if (delta !== 0) {
+        if (oldLoc.length > errLoc.length) {
+          var newLoc = pScale(oldLoc, delta);
+          oldLoc = pScale(errLoc, inv(delta));
+          errLoc = newLoc;
+        }
+        errLoc = pAdd(errLoc, pScale(oldLoc, delta));
+      }
+    }
+    while (errLoc.length && errLoc[0] === 0) errLoc.shift();
+    return errLoc;
+  }
+  function findErrors(errLocRev, nmess) {
+    var errs = errLocRev.length - 1, pos = [];
+    for (var i = 0; i < nmess; i++) if (pEval(errLocRev, pw(2, i)) === 0) pos.push(nmess - 1 - i);
+    if (pos.length !== errs) return null;
+    return pos;
+  }
+  function findErrataLocator(coefPos) {
+    var e = [1];
+    for (var i = 0; i < coefPos.length; i++) e = pMul(e, pAdd([1], [pw(2, coefPos[i]), 0]));
+    return e;
+  }
+  function findErrEval(synd, errLoc, nsym) {
+    var r = pMul(synd, errLoc);
+    var divi = [1].concat(new Array(nsym + 1).fill(0));
+    return pDiv(r, divi)[1];
+  }
+  function correctErrata(msg, synd, errPos) {
+    var coefPos = errPos.map(function (p) { return msg.length - 1 - p; });
+    var errLoc = findErrataLocator(coefPos);
+    var syndRev = synd.slice().reverse();
+    var errEval = findErrEval(syndRev, errLoc, errLoc.length - 1).reverse();
+    var X = [];
+    for (var i = 0; i < coefPos.length; i++) { var l = 255 - coefPos[i]; X.push(pw(2, -l)); }
+    var E = new Array(msg.length).fill(0);
+    for (var k = 0; k < X.length; k++) {
+      var Xi = X[k], XiInv = inv(Xi);
+      var prime = 1;
+      for (var j = 0; j < X.length; j++) if (j !== k) prime = mul(prime, (1 ^ mul(XiInv, X[j])));
+      var y = pEval(errEval.slice().reverse(), XiInv);
+      y = mul(pw(Xi, 1), y);
+      if (prime === 0) return null;
+      E[errPos[k]] = div(y, prime);
+    }
+    return pAdd(msg, E);
+  }
+
+  function rsDecodeArr(codeword, nsym) {
+    var msg = codeword.slice();
+    var synd = calcSynd(msg, nsym);
+    if (pMax(synd) === 0) return msg.slice(0, msg.length - nsym);
+    var errLoc = findErrLocator(synd, nsym);
+    var pos = findErrors(errLoc.slice().reverse(), msg.length);
+    if (!pos) return null;
+    var out = correctErrata(msg, synd, pos);
+    if (!out) return null;
+    if (pMax(calcSynd(out, nsym)) !== 0) return null;
+    return out.slice(0, out.length - nsym);
+  }
+
+  var API = {
+    rsEncode: function (dataU8, nsym) { return Uint8Array.from(rsEncodeArr(Array.from(dataU8), nsym)); },
+    rsDecode: function (cwU8, nsym) { var r = rsDecodeArr(Array.from(cwU8), nsym); return r ? Uint8Array.from(r) : null; }
+  };
+  if (typeof module === "object" && module.exports) module.exports = API;
+  else root.RS = API;
+})(typeof self !== "undefined" ? self : this);
+
+/* ==== codec.js ==== */
+/* ============================================================
+   OpticalCodec — lõi dùng chung cho SENDER và RECEIVER
+   - Không phụ thuộc DOM. Chạy được cả Node (test) lẫn browser.
+   - Fountain code (LT / Robust Soliton) để chống mất frame.
+   ============================================================ */
+(function (root) {
+  "use strict";
+
+  var MAGIC0 = 0x4f, MAGIC1 = 0x58;      // "OX"
+  var VERSION = 1;
+  var HDR_DATA = 18;                      // độ dài header của frame data
+  var TYPE_DATA = 0, TYPE_META = 1;
+
+  // ---------- PRNG xác định (mulberry32) ----------
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- Robust Soliton distribution (cache theo K) ----------
+  var _cdfCache = {};
+  function robustSolitonCDF(K) {
+    if (_cdfCache[K]) return _cdfCache[K];
+    var c = 0.03, delta = 0.05;
+    var R = c * Math.log(K / delta) * Math.sqrt(K);
+    var rho = new Array(K + 1).fill(0);
+    rho[1] = 1 / K;
+    for (var i = 2; i <= K; i++) rho[i] = 1 / (i * (i - 1));
+    var tau = new Array(K + 1).fill(0);
+    var kr = Math.floor(K / R);
+    if (kr < 1) kr = 1;
+    for (var j = 1; j <= kr - 1; j++) tau[j] = R / (j * K);
+    if (kr >= 1 && kr <= K) tau[kr] = R * Math.log(R / delta) / K;
+    var beta = 0;
+    for (var k = 1; k <= K; k++) beta += rho[k] + tau[k];
+    var cdf = new Float64Array(K + 1);
+    var acc = 0;
+    for (var m = 1; m <= K; m++) { acc += (rho[m] + tau[m]) / beta; cdf[m] = acc; }
+    cdf[K] = 1.0;
+    _cdfCache[K] = cdf;
+    return cdf;
+  }
+  function sampleDegree(rng, K, cdf) {
+    if (K <= 1) return 1;
+    var u = rng();
+    // binary search: degree nhỏ nhất d sao cho cdf[d] >= u
+    var lo = 1, hi = K;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (cdf[mid] >= u) hi = mid; else lo = mid + 1;
+    }
+    return lo;
+  }
+
+  // Floyd's algorithm: chọn d chỉ số phân biệt trong [0,K) — xác định theo rng
+  function pickNeighbors(rng, K, d) {
+    if (d >= K) { var all = new Array(K); for (var a = 0; a < K; a++) all[a] = a; return all; }
+    var set = new Set();
+    var out = [];
+    for (var j = K - d; j < K; j++) {
+      var t = Math.floor(rng() * (j + 1));
+      if (!set.has(t)) { set.add(t); out.push(t); }
+      else { set.add(j); out.push(j); }
+    }
+    return out;
+  }
+
+  // Lấy danh sách neighbor cho 1 symbol từ seed (dùng chung 2 phía)
+  function neighborsFromSeed(seed, K) {
+    var cdf = robustSolitonCDF(K);
+    var rng = mulberry32(seed);
+    var d = sampleDegree(rng, K, cdf);
+    return pickNeighbors(rng, K, d);
+  }
+
+  // ---------- CRC32 ----------
+  var _crcTable = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  function crc32(bytes) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) c = _crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // ---------- byte <-> latin1 string (cho QR byte mode) ----------
+  function bytesToLatin1(bytes) {
+    var s = "", CH = 8192;
+    for (var i = 0; i < bytes.length; i += CH) {
+      s += String.fromCharCode.apply(null, bytes.subarray ? bytes.subarray(i, i + CH) : bytes.slice(i, i + CH));
+    }
+    return s;
+  }
+  function latin1ToBytes(str) {
+    var b = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) b[i] = str.charCodeAt(i) & 0xff;
+    return b;
+  }
+
+  // ---------- Header pack/parse ----------
+  function writeU32(arr, off, v) { arr[off]=(v>>>24)&255; arr[off+1]=(v>>>16)&255; arr[off+2]=(v>>>8)&255; arr[off+3]=v&255; }
+  function readU32(arr, off) { return ((arr[off]<<24)|(arr[off+1]<<16)|(arr[off+2]<<8)|arr[off+3])>>>0; }
+  function writeU16(arr, off, v) { arr[off]=(v>>>8)&255; arr[off+1]=v&255; }
+  function readU16(arr, off) { return ((arr[off]<<8)|arr[off+1])>>>0; }
+
+  function packDataFrame(fileId, fileSize, blockSize, seed, payload) {
+    var out = new Uint8Array(HDR_DATA + payload.length);
+    out[0]=MAGIC0; out[1]=MAGIC1; out[2]=VERSION; out[3]=TYPE_DATA;
+    writeU32(out,4,fileId); writeU32(out,8,fileSize); writeU16(out,12,blockSize); writeU32(out,14,seed);
+    out.set(payload, HDR_DATA);
+    return out;
+  }
+  function packMetaFrame(fileId, fileSize, blockSize, crc, nameBytes) {
+    var out = new Uint8Array(19 + nameBytes.length);
+    out[0]=MAGIC0; out[1]=MAGIC1; out[2]=VERSION; out[3]=TYPE_META;
+    writeU32(out,4,fileId); writeU32(out,8,fileSize); writeU16(out,12,blockSize);
+    writeU32(out,14,crc); out[18]=nameBytes.length & 255;
+    out.set(nameBytes, 19);
+    return out;
+  }
+  function parseFrame(bytes) {
+    if (bytes.length < 4 || bytes[0]!==MAGIC0 || bytes[1]!==MAGIC1) return null;
+    var type = bytes[3];
+    if (type===TYPE_DATA) {
+      if (bytes.length < HDR_DATA) return null;
+      return {
+        type: TYPE_DATA,
+        fileId: readU32(bytes,4), fileSize: readU32(bytes,8),
+        blockSize: readU16(bytes,12), seed: readU32(bytes,14),
+        payload: bytes.subarray(HDR_DATA)
+      };
+    } else if (type===TYPE_META) {
+      if (bytes.length < 19) return null;
+      var nlen = bytes[18];
+      var name = "";
+      try { name = decodeURIComponent(escape(bytesToLatin1(bytes.subarray(19,19+nlen)))); }
+      catch(e){ name = bytesToLatin1(bytes.subarray(19,19+nlen)); }
+      return {
+        type: TYPE_META,
+        fileId: readU32(bytes,4), fileSize: readU32(bytes,8),
+        blockSize: readU16(bytes,12), crc: readU32(bytes,14), name: name
+      };
+    }
+    return null;
+  }
+
+  // ---------- Encoder (sender) ----------
+  function Encoder(fileBytes, blockSize, fileName) {
+    this.file = fileBytes;
+    this.blockSize = blockSize;
+    this.fileSize = fileBytes.length;
+    this.K = Math.max(1, Math.ceil(fileBytes.length / blockSize));
+    this.fileId = (Math.random() * 0xFFFFFFFF) >>> 0;
+    this.fileName = fileName || "received.bin";
+    this.crc = crc32(fileBytes);
+    // cắt block, pad block cuối
+    this.blocks = [];
+    for (var i = 0; i < this.K; i++) {
+      var blk = new Uint8Array(blockSize);
+      var start = i * blockSize;
+      var slice = fileBytes.subarray(start, Math.min(start + blockSize, fileBytes.length));
+      blk.set(slice, 0);
+      this.blocks.push(blk);
+    }
+  }
+  Encoder.prototype.dataFrame = function (seed) {
+    var idx = neighborsFromSeed(seed, this.K);
+    var data = new Uint8Array(this.blockSize);
+    for (var n = 0; n < idx.length; n++) {
+      var b = this.blocks[idx[n]];
+      for (var j = 0; j < this.blockSize; j++) data[j] ^= b[j];
+    }
+    return packDataFrame(this.fileId, this.fileSize, this.blockSize, seed, data);
+  };
+  Encoder.prototype.metaFrame = function () {
+    var nameBytes = latin1ToBytes(unescape(encodeURIComponent(this.fileName)));
+    if (nameBytes.length > 255) nameBytes = nameBytes.subarray(0, 255);
+    return packMetaFrame(this.fileId, this.fileSize, this.blockSize, this.crc, nameBytes);
+  };
+
+  // ---------- Decoder (receiver) ----------
+  function Decoder() { this.sessions = {}; }
+  Decoder.prototype._session = function (fileId, fileSize, blockSize) {
+    var s = this.sessions[fileId];
+    if (!s) {
+      var K = Math.max(1, Math.ceil(fileSize / blockSize));
+      s = {
+        fileId: fileId, fileSize: fileSize, blockSize: blockSize, K: K,
+        blocks: new Array(K).fill(null),   // Uint8Array khi đã giải
+        known: 0,
+        pending: [],                        // {idx:Set<number>, data:Uint8Array}
+        adj: null,                          // adjacency: idx nguồn -> danh sách pending
+        name: null, crc: null, done: false, bytes: null
+      };
+      s.adj = new Array(K); for (var i=0;i<K;i++) s.adj[i]=[];
+      this.sessions[fileId] = s;
+    }
+    return s;
+  };
+  Decoder.prototype.addMeta = function (info) {
+    var s = this._session(info.fileId, info.fileSize, info.blockSize);
+    s.name = info.name; s.crc = info.crc;
+    return s;
+  };
+  // trả về session (để đọc tiến độ). Nếu vừa xong -> s.done=true, s.bytes có dữ liệu
+  Decoder.prototype.addData = function (info) {
+    var s = this._session(info.fileId, info.fileSize, info.blockSize);
+    if (s.done) return s;
+    var idx = neighborsFromSeed(info.seed, s.K);
+    var data = new Uint8Array(s.blockSize);
+    data.set(info.payload.subarray(0, s.blockSize));
+
+    // rút gọn với block đã biết
+    var unknown = [];
+    for (var n = 0; n < idx.length; n++) {
+      var bi = idx[n];
+      if (s.blocks[bi]) {
+        var kb = s.blocks[bi];
+        for (var j = 0; j < s.blockSize; j++) data[j] ^= kb[j];
+      } else {
+        unknown.push(bi);
+      }
+    }
+    if (unknown.length === 0) return s;          // dư thừa
+    // loại trùng trong unknown (hiếm, nhưng an toàn)
+    if (unknown.length > 1) {
+      var seen = {}; var uq = [];
+      for (var u=0; u<unknown.length; u++){ if(!seen[unknown[u]]){seen[unknown[u]]=1; uq.push(unknown[u]);} }
+      unknown = uq;
+      if (unknown.length === 0) return s;
+    }
+
+    var sym = { idx: new Set(unknown), data: data };
+    this._absorb(s, sym);
+    if (!s.done && s.known >= s.K) this._finish(s);
+    return s;
+  };
+
+  Decoder.prototype._absorb = function (s, sym) {
+    var queue = [];
+    var pushSym = function (symbol) {
+      if (symbol.idx.size === 1) {
+        queue.push(symbol);
+      } else {
+        s.pending.push(symbol);
+        symbol.idx.forEach(function (bi) { s.adj[bi].push(symbol); });
+      }
+    };
+    pushSym(sym);
+
+    while (queue.length) {
+      var cur = queue.pop();
+      // lấy chỉ số duy nhất
+      var only = -1; cur.idx.forEach(function (x) { only = x; });
+      if (only < 0) continue;
+      if (s.blocks[only]) continue;              // đã biết rồi
+      var blk = cur.data.slice();                 // COPY: tránh tự-XOR khi cur nằm trong adj[only]
+      s.blocks[only] = blk; s.known++;
+      // lan sang các pending chứa only
+      var list = s.adj[only]; s.adj[only] = [];
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if (p === cur) continue;
+        if (!p.idx.has(only)) continue;
+        for (var j = 0; j < s.blockSize; j++) p.data[j] ^= blk[j];
+        p.idx.delete(only);
+        if (p.idx.size === 1) {
+          // gỡ p khỏi pending list tổng (đánh dấu); sẽ được xử lý ở queue
+          p._resolved = true;
+          queue.push(p);
+        } else if (p.idx.size === 0) {
+          p._resolved = true; // rác
+        }
+      }
+      if (s.known >= s.K) break;
+    }
+    // dọn pending đã resolved
+    if (s.pending.length) {
+      var np = [];
+      for (var k = 0; k < s.pending.length; k++) if (!s.pending[k]._resolved && s.pending[k].idx.size > 1) np.push(s.pending[k]);
+      s.pending = np;
+    }
+  };
+
+  Decoder.prototype._finish = function (s) {
+    var out = new Uint8Array(s.fileSize);
+    for (var i = 0; i < s.K; i++) {
+      var blk = s.blocks[i]; if (!blk) return; // chưa đủ (không nên xảy ra)
+      out.set(blk.subarray(0, Math.min(s.blockSize, s.fileSize - i * s.blockSize)), i * s.blockSize);
+    }
+    s.bytes = out; s.done = true;
+    s.crcOk = (s.crc == null) ? null : (crc32(out) === s.crc);
+  };
+
+  // ---------- QR type-fit (chọn version nhỏ nhất chứa được payload) ----------
+  // cần biến 'qrcode' toàn cục (thư viện qrcode-generator)
+  function fitType(byteLen, ecc, qrcodeLib) {
+    // thử từ version 1..40
+    for (var t = 1; t <= 40; t++) {
+      try {
+        var qr = qrcodeLib(t, ecc);
+        qr.addData(new Array(byteLen + 1).join("\u0001"), "Byte"); // chuỗi latin1 dài byteLen
+        qr.make();
+        return t;
+      } catch (e) { /* tràn -> thử version lớn hơn */ }
+    }
+    return 40;
+  }
+
+  var API = {
+    mulberry32: mulberry32,
+    robustSolitonCDF: robustSolitonCDF,
+    neighborsFromSeed: neighborsFromSeed,
+    crc32: crc32,
+    bytesToLatin1: bytesToLatin1,
+    latin1ToBytes: latin1ToBytes,
+    packDataFrame: packDataFrame,
+    packMetaFrame: packMetaFrame,
+    parseFrame: parseFrame,
+    Encoder: Encoder,
+    Decoder: Decoder,
+    fitType: fitType,
+    HDR_DATA: HDR_DATA,
+    TYPE_DATA: TYPE_DATA,
+    TYPE_META: TYPE_META
+  };
+
+  if (typeof module === "object" && module.exports) module.exports = API;
+  else root.OpticalCodec = API;
+
+})(typeof self !== "undefined" ? self : this);
+
+/* ==== grid.js ==== */
+/* Lớp vật lý "lưới màu": geometry + encode/decode 1 frame.
+   Mốc = ô vuông đen đặc ở 4 góc + vành trắng cách ly. Dò bằng connected-components.
+   Phụ thuộc: codec.js (fountain) + grid_rs.js (RS). */
+(function (root) {
+  "use strict";
+  var RS = (typeof require === "function") ? require("./grid_rs.js") : root.RS;
+
+  var PALETTES = {
+    2:  [[0,0,0],[255,255,255]],
+    4:  [[0,0,0],[90,90,90],[175,175,175],[255,255,255]],
+    8:  [[0,0,0],[255,0,0],[0,255,0],[0,0,255],[255,255,0],[255,0,255],[0,255,255],[255,255,255]],
+    16: [[0,0,0],[128,0,0],[0,128,0],[0,0,128],[128,128,0],[128,0,128],[0,128,128],[128,128,128],
+         [255,0,0],[0,255,0],[0,0,255],[255,255,0],[255,0,255],[0,255,255],[255,128,0],[255,255,255]]
+  };
+  var FS = 6;   // ô vuông mốc 6x6
+  var QZ = 2;   // vành trắng cách ly 2 ô
+  var CAL = 3;  // 3 hàng canh màu
+
+  function log2(n){ return Math.round(Math.log(n)/Math.log(2)); }
+  function crc16(bytes, len){
+    var c=0xFFFF; len=(len==null)?bytes.length:len;
+    for (var i=0;i<len;i++){ c^=bytes[i]<<8; for (var k=0;k<8;k++) c=(c&0x8000)?((c<<1)^0x1021)&0xFFFF:(c<<1)&0xFFFF; }
+    return c&0xFFFF;
+  }
+
+  function makeGeometry(N, P, nsym){
+    var bps=log2(P);
+    var reserved={}; function key(r,c){ return r*N+c; }
+    var QB=FS+QZ; // khối góc gồm ô vuông + vành
+    // 4 ô vuông + vành trắng
+    var sq=[[0,0],[0,N-FS],[N-FS,N-FS],[N-FS,0]]; // TL,TR,BR,BL (top-left mỗi ô)
+    // đánh dấu square + quiet trong khối QBxQB mỗi góc
+    var qcorners=[[0,0],[0,N-QB],[N-QB,N-QB],[N-QB,0]];
+    for (var m=0;m<4;m++){
+      var br=qcorners[m][0], bc=qcorners[m][1];
+      for (var dr=0;dr<QB;dr++) for (var dc=0;dc<QB;dc++){
+        var rr=br+dr, cc=bc+dc;
+        // ô có thuộc square không? square nằm ở phía góc của khối
+        var inSq;
+        if (m===0) inSq = (dr<FS && dc<FS);
+        else if (m===1) inSq = (dr<FS && dc>=QZ);
+        else if (m===2) inSq = (dr>=QZ && dc>=QZ);
+        else inSq = (dr>=QZ && dc<FS);
+        reserved[key(rr,cc)] = inSq ? {sq:m} : {quiet:1};
+      }
+    }
+    // canh màu: rows 0..CAL-1, cols QB..N-1-QB
+    var calib=[], cnt=0;
+    for (var r=0;r<CAL;r++) for (var c=QB;c<=N-1-QB;c++){
+      if (reserved[key(r,c)]) continue;
+      var pidx=cnt%P; cnt++;
+      reserved[key(r,c)]={cal:pidx}; calib.push({r:r,c:c,p:pidx});
+    }
+    var data=[];
+    for (var rr2=0;rr2<N;rr2++) for (var cc2=0;cc2<N;cc2++) if (!reserved[key(rr2,cc2)]) data.push([rr2,cc2]);
+
+    var capacityBytes=Math.floor(data.length*bps/8);
+    var nb=Math.ceil(capacityBytes/255);
+    var base=Math.floor(capacityBytes/nb), rem=capacityBytes%nb;
+    var blocks=[], messageCap=0;
+    for (var b=0;b<nb;b++){ var n=base+(b<rem?1:0); var k=n-nsym; if(k<1)k=1; blocks.push({n:n,k:k}); messageCap+=k; }
+    var Bfount=messageCap-2-2-18;
+
+    var half=(FS-1)/2;
+    return {
+      N:N,P:P,bps:bps,nsym:nsym,
+      markers:{ size:FS, centers:[[half,half],[N-1-half,half],[N-1-half,N-1-half],[half,N-1-half]] },
+      calib:calib, data:data,
+      capacityBytes:capacityBytes, blocks:blocks, messageCap:messageCap, Bfount:Bfount, reserved:reserved
+    };
+  }
+
+  function rsStreamEncode(msg, geom){
+    var out=new Uint8Array(geom.capacityBytes), op=0, mp=0;
+    for (var b=0;b<geom.blocks.length;b++){ var k=geom.blocks[b].k;
+      var data=msg.subarray(mp,mp+k); mp+=k;
+      var par=RS.rsEncode(data,geom.nsym);
+      out.set(data,op); op+=k; out.set(par,op); op+=par.length; }
+    return out;
+  }
+  function rsStreamDecode(cw, geom){
+    var msg=new Uint8Array(geom.messageCap), mp=0, cp=0;
+    for (var b=0;b<geom.blocks.length;b++){ var n=geom.blocks[b].n,k=geom.blocks[b].k;
+      var block=cw.subarray(cp,cp+n); cp+=n;
+      var dec=RS.rsDecode(block,geom.nsym); if(!dec)return null;
+      msg.set(dec.subarray(0,k),mp); mp+=k; }
+    return msg;
+  }
+  function packSymbols(cw, geom){
+    var syms=new Uint8Array(geom.data.length), bps=geom.bps, tb=cw.length*8;
+    for (var t=0;t<syms.length;t++){ var v=0;
+      for (var b=0;b<bps;b++){ var bit=0,pos=t*bps+b; if(pos<tb)bit=(cw[pos>>3]>>(7-(pos&7)))&1; v=(v<<1)|bit; }
+      syms[t]=v; }
+    return syms;
+  }
+  function unpackSymbols(syms, geom){
+    var cw=new Uint8Array(geom.capacityBytes), bps=geom.bps, tb=cw.length*8;
+    for (var t=0;t<syms.length;t++){ var v=syms[t];
+      for (var b=0;b<bps;b++){ var pos=t*bps+b; if(pos>=tb)break; var bit=(v>>(bps-1-b))&1; if(bit)cw[pos>>3]|=(1<<(7-(pos&7))); } }
+    return cw;
+  }
+
+  function encodeFrame(logicalBytes, geom){
+    var N=geom.N, P=geom.P;
+    if (logicalBytes.length>geom.messageCap-4) throw new Error("frame quá dài");
+    var msg=new Uint8Array(geom.messageCap);
+    msg[0]=(logicalBytes.length>>8)&255; msg[1]=logicalBytes.length&255;
+    msg.set(logicalBytes,2);
+    var cc=crc16(msg,2+logicalBytes.length);
+    msg[2+logicalBytes.length]=(cc>>8)&255; msg[2+logicalBytes.length+1]=cc&255;
+    var cw=rsStreamEncode(msg,geom);
+    var syms=packSymbols(cw,geom);
+    var pal=PALETTES[P];
+    var grid=new Uint8ClampedArray(N*N*3);
+    function put(r,c,rgb){ var o=(r*N+c)*3; grid[o]=rgb[0]; grid[o+1]=rgb[1]; grid[o+2]=rgb[2]; }
+    for (var i=0;i<N*N;i++){ grid[i*3]=255; grid[i*3+1]=255; grid[i*3+2]=255; }
+    var BLK=[0,0,0];
+    // vẽ reserved: square=đen, quiet=trắng (đã là trắng)
+    for (var kk in geom.reserved){ var rc=+kk; var r=(rc/N)|0, c=rc%N; if(geom.reserved[kk].sq!=null) put(r,c,BLK); }
+    for (var q=0;q<geom.calib.length;q++){ var cl=geom.calib[q]; put(cl.r,cl.c,pal[cl.p]); }
+    for (var t=0;t<geom.data.length;t++){ put(geom.data[t][0],geom.data[t][1],pal[syms[t]]); }
+    return grid;
+  }
+
+  function decodeSampled(cellsRGB, calibCentroids, geom){
+    var N=geom.N, P=geom.P;
+    var syms=new Uint8Array(geom.data.length);
+    for (var t=0;t<geom.data.length;t++){
+      var r=geom.data[t][0], c=geom.data[t][1], o=(r*N+c)*3;
+      var R=cellsRGB[o],G=cellsRGB[o+1],B=cellsRGB[o+2];
+      var best=0,bd=1e18;
+      for (var p=0;p<P;p++){ var cc=calibCentroids[p]; var dr=R-cc[0],dg=G-cc[1],db=B-cc[2]; var d=dr*dr+dg*dg+db*db; if(d<bd){bd=d;best=p;} }
+      syms[t]=best;
+    }
+    var cw=unpackSymbols(syms,geom);
+    var msg=rsStreamDecode(cw,geom); if(!msg)return null;
+    var len=(msg[0]<<8)|msg[1]; if(len<0||len>geom.messageCap-4)return null;
+    var cc2=crc16(msg,2+len); var got=(msg[2+len]<<8)|msg[2+len+1];
+    if (cc2!==got) return null;
+    return msg.subarray(2,2+len);
+  }
+
+  var API={ PALETTES:PALETTES, FS:FS, QZ:QZ, CAL:CAL, makeGeometry:makeGeometry, encodeFrame:encodeFrame, decodeSampled:decodeSampled, crc16:crc16 };
+  if (typeof module==="object"&&module.exports) module.exports=API;
+  else root.Grid=API;
+})(typeof self!=="undefined"?self:this);
+
+/* ==== grid_decode.js ==== */
+/* Dò 4 ô vuông mốc bằng connected-components -> homography -> lấy mẫu.
+   imgData = {data:Uint8ClampedArray(RGBA), width, height} */
+(function (root) {
+  "use strict";
+
+  function prep(img, maxDim){
+    var W=img.width, H=img.height, data=img.data;
+    var scale=Math.min(1, maxDim/Math.max(W,H));
+    var sw=Math.max(1,Math.round(W*scale)), sh=Math.max(1,Math.round(H*scale));
+    var lum=new Float32Array(sw*sh);
+    for (var y=0;y<sh;y++){ var sy=Math.min(H-1,(y/scale)|0);
+      for (var x=0;x<sw;x++){ var sx=Math.min(W-1,(x/scale)|0); var o=(sy*W+sx)*4;
+        lum[y*sw+x]=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2]; } }
+    var I=new Float64Array((sw+1)*(sh+1));
+    for (var yy=1;yy<=sh;yy++){ var rs=0; for (var xx=1;xx<=sw;xx++){ rs+=lum[(yy-1)*sw+(xx-1)]; I[yy*(sw+1)+xx]=I[(yy-1)*(sw+1)+xx]+rs; } }
+    var win=Math.max(8, Math.round(Math.min(sw,sh)/10));
+    var dark=new Uint8Array(sw*sh);
+    for (var y2=0;y2<sh;y2++){ var y1=Math.max(0,y2-win), y3=Math.min(sh-1,y2+win);
+      for (var x2=0;x2<sw;x2++){ var x1=Math.max(0,x2-win), x3=Math.min(sw-1,x2+win);
+        var area=(x3-x1+1)*(y3-y1+1);
+        var sum=I[(y3+1)*(sw+1)+(x3+1)]-I[y1*(sw+1)+(x3+1)]-I[(y3+1)*(sw+1)+x1]+I[y1*(sw+1)+x1];
+        dark[y2*sw+x2]= (lum[y2*sw+x2]*area < sum - 8*area) ? 1 : 0; } }
+    return {dark:dark, sw:sw, sh:sh, scale:scale, lum:lum};
+  }
+
+  // dò 4 ô vuông: trả về [TL,TR,BR,BL] điểm ảnh full-res, hoặc null
+  function detectQuad(img){
+    var p=prep(img, 420);
+    var sw=p.sw, sh=p.sh, dark=p.dark;
+    var visited=new Uint8Array(sw*sh);
+    var stack=new Int32Array(sw*sh);
+    var comps=[];
+    for (var i=0;i<sw*sh;i++){
+      if (visited[i]||!dark[i]) continue;
+      var sp=0; stack[sp++]=i; visited[i]=1;
+      var area=0, sumx=0, sumy=0, touch=false;
+      while(sp>0){
+        var q=stack[--sp]; var px=q%sw, py=(q/sw)|0;
+        area++; sumx+=px; sumy+=py;
+        if (px===0||py===0||px===sw-1||py===sh-1) touch=true;
+        if(px>0){var a=q-1; if(!visited[a]&&dark[a]){visited[a]=1;stack[sp++]=a;}}
+        if(px<sw-1){var b=q+1; if(!visited[b]&&dark[b]){visited[b]=1;stack[sp++]=b;}}
+        if(py>0){var c=q-sw; if(!visited[c]&&dark[c]){visited[c]=1;stack[sp++]=c;}}
+        if(py<sh-1){var d=q+sw; if(!visited[d]&&dark[d]){visited[d]=1;stack[sp++]=d;}}
+      }
+      if (!touch && area>=Math.max(9,(sw*sh)*0.0006)) comps.push({area:area, x:sumx/area, y:sumy/area});
+    }
+    if (comps.length<4) return null;
+    var cand=comps; // chọn theo vị trí góc, không lọc theo area (ô vuông luôn sát góc nhất)
+    // 4 góc ảnh
+    var corners=[[0,0],[sw,0],[sw,sh],[0,sh]];
+    var chosen=[null,null,null,null], usedIdx=[-1,-1,-1,-1];
+    for (var k=0;k<4;k++){
+      var best=-1, bd=1e18;
+      for (var j=0;j<cand.length;j++){
+        var used=false; for(var u=0;u<4;u++) if(usedIdx[u]===j) used=true; if(used) continue;
+        var dx=cand[j].x-corners[k][0], dy=cand[j].y-corners[k][1]; var dd=dx*dx+dy*dy;
+        if (dd<bd){ bd=dd; best=j; }
+      }
+      if (best<0) return null;
+      usedIdx[k]=best; chosen[k]=cand[best];
+    }
+    // refine sub-pixel: trọng tâm pixel tối quanh centroid (cửa sổ ~ cạnh ô vuông)
+    var s=1/p.scale;
+    function refine(cx,cy,sidePx){
+      var W=img.width,H=img.height,data=img.data;
+      var rad=sidePx*0.6;
+      var x0=Math.max(0,Math.floor(cx-rad)),x1=Math.min(W-1,Math.ceil(cx+rad));
+      var y0=Math.max(0,Math.floor(cy-rad)),y1=Math.min(H-1,Math.ceil(cy+rad));
+      var mean=0,n=0;
+      for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){var o=(y*W+x)*4;mean+=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];n++;}
+      if(!n)return [cx,cy]; mean/=n; var th=mean*0.7;
+      var sx=0,sy=0,swt=0;
+      for(var y2=y0;y2<=y1;y2++)for(var x2=x0;x2<=x1;x2++){var o2=(y2*W+x2)*4;var l=0.299*data[o2]+0.587*data[o2+1]+0.114*data[o2+2];if(l<th){var w=th-l;sx+=x2*w;sy+=y2*w;swt+=w;}}
+      if(swt<=0)return [cx,cy]; return [sx/swt,sy/swt];
+    }
+    var out=[];
+    for (var m=0;m<4;m++){
+      var cx=chosen[m].x*s, cy=chosen[m].y*s;
+      var sidePx=Math.sqrt(chosen[m].area)*s;
+      out.push(refine(cx,cy,sidePx));
+    }
+    return out; // [TL,TR,BR,BL]
+  }
+
+  function solve8(A,b){
+    var n=8;
+    for (var col=0;col<n;col++){
+      var piv=col; for (var r=col+1;r<n;r++) if(Math.abs(A[r][col])>Math.abs(A[piv][col]))piv=r;
+      if (Math.abs(A[piv][col])<1e-9) return null;
+      var t=A[col];A[col]=A[piv];A[piv]=t; var tb=b[col];b[col]=b[piv];b[piv]=tb;
+      var d=A[col][col]; for (var c=col;c<n;c++)A[col][c]/=d; b[col]/=d;
+      for (var r2=0;r2<n;r2++){ if(r2===col)continue; var f=A[r2][col]; if(f===0)continue; for(var c2=col;c2<n;c2++)A[r2][c2]-=f*A[col][c2]; b[r2]-=f*b[col]; }
+    }
+    return b;
+  }
+  function solveHomography(src,dst){
+    var A=[],b=[];
+    for (var i=0;i<4;i++){ var x=src[i][0],y=src[i][1],X=dst[i][0],Y=dst[i][1];
+      A.push([x,y,1,0,0,0,-x*X,-y*X]); b.push(X);
+      A.push([0,0,0,x,y,1,-x*Y,-y*Y]); b.push(Y); }
+    var h=solve8(A,b); if(!h)return null;
+    return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];
+  }
+  function applyH(H,x,y){ var d=H[6]*x+H[7]*y+H[8]; return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d]; }
+  function sampleAt(img,x,y){
+    var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;
+    for (var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}
+    return n?[R/n,G/n,B/n]:[0,0,0];
+  }
+  function sampleGrid(img,H,geom){
+    var N=geom.N,cells=new Uint8ClampedArray(N*N*3);
+    for (var r=0;r<N;r++)for(var c=0;c<N;c++){ var pnt=applyH(H,c,r); var rgb=sampleAt(img,pnt[0],pnt[1]); var o=(r*N+c)*3; cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2]; }
+    var P=geom.P,sum=[]; for(var i=0;i<P;i++)sum.push([0,0,0,0]);
+    for (var q=0;q<geom.calib.length;q++){ var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3; var st=sum[cl.p]; st[0]+=cells[o2];st[1]+=cells[o2+1];st[2]+=cells[o2+2];st[3]++; }
+    var cent=[]; for(var p2=0;p2<P;p2++){var s2=sum[p2];cent.push(s2[3]?[s2[0]/s2[3],s2[1]/s2[3],s2[2]/s2[3]]:[0,0,0]);}
+    return {cells:cells,centroids:cent};
+  }
+
+  var API={ detectQuad:detectQuad, solveHomography:solveHomography, applyH:applyH, sampleGrid:sampleGrid, prep:prep };
+  if (typeof module==="object"&&module.exports) module.exports=API;
+  else root.GridDecode=API;
+})(typeof self!=="undefined"?self:this);
+</script>
+<script>
+const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
+const PRESETS={
+ 'an-toan':{N:52,P:8,nsym:40,label:'An toàn — chịu rung/mờ tốt, chậm hơn'},
+ 'can-bang':{N:64,P:8,nsym:32,label:'Cân bằng — khuyên dùng'},
+ 'nhanh':{N:72,P:8,nsym:32,label:'Nhanh'},
+ 'cuc-nhanh':{N:76,P:16,nsym:56,label:'Cực nhanh — cần camera nét, giữ chắc tay'}
+};
+const $=id=>document.getElementById(id);
+const sel=$('preset');
+Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;sel.appendChild(o);});
+sel.value='can-bang';
+let geom=null;
+function buildGeom(){const p=PRESETS[sel.value];geom=G.makeGeometry(p.N,p.P,p.nsym);
+  $('presetInfo').textContent=`Lưới ${p.N}×${p.N}, ${p.P} màu — ${geom.Bfount} byte/khung.`;}
+sel.onchange=buildGeom; buildGeom();
+
+const v=$('v'), ov=$('ov');
+const cap=document.createElement('canvas');
+let stream=null, running=false, decoder=null, activeId=null, lastName='received.bin';
+let fcount=0, lastT=performance.now(), decoded=false;
+
+$('cam').onclick=async()=>{
+  if(running){ stop(); return; }
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+    v.srcObject=stream; await v.play();
+    decoder=new C.Decoder(); activeId=null; decoded=false;
+    $('result').innerHTML=''; $('cam').textContent='Tắt camera'; running=true;
+    requestAnimationFrame(loop);
+  }catch(e){ alert('Không mở được camera: '+e.message+'\nHãy dùng HTTPS (GitHub Pages) và cấp quyền camera.'); }
+};
+function stop(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}$('cam').textContent='Bật camera';}
+
+function loop(){
+  if(!running) return;
+  const vw=v.videoWidth, vh=v.videoHeight;
+  if(vw&&vh){
+    // chụp về canvas ~600px chiều lớn
+    const scale=Math.min(1, 640/Math.max(vw,vh));
+    const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
+    if(cap.width!==cw){cap.width=cw;cap.height=ch;}
+    const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
+    const img=cx.getImageData(0,0,cw,ch);
+    let quad=null;
+    try{ quad=D.detectQuad(img); }catch(e){}
+    drawOverlay(quad,cw,ch);
+    if(quad){
+      $('det').textContent='thấy 4 góc'; $('det').className='badge on';
+      const H=D.solveHomography(geom.markers.centers, quad);
+      if(H){
+        const smp=D.sampleGrid(img,H,geom);
+        let logical=null; try{ logical=G.decodeSampled(smp.cells,smp.centroids,geom);}catch(e){}
+        if(logical){
+          const info=C.parseFrame(logical);
+          if(info){
+            if(info.type===C.TYPE_META){ decoder.addMeta(info); if(info.name) {lastName=info.name;} activeId=info.fileId; $('fname').textContent=info.name||lastName; }
+            else { const s=decoder.addData(info); activeId=info.fileId;
+              updateProgress(s);
+              if(s.done && !decoded){ decoded=true; finish(s); }
+            }
+          }
+        }
+      }
+    } else { $('det').textContent='chưa thấy'; $('det').className='badge'; }
+    // fps
+    fcount++; const now=performance.now(); if(now-lastT>500){$('dfps').textContent=Math.round(fcount*1000/(now-lastT))+' fps';fcount=0;lastT=now;}
+  }
+  requestAnimationFrame(loop);
+}
+
+function updateProgress(s){ if(!s)return; const pct=Math.min(100,Math.round(s.known/s.K*100));
+  $('pi').style.width=pct+'%'; $('prog').textContent=s.known+' / '+s.K+' block'; if(s.name)$('fname').textContent=s.name;}
+
+function finish(s){
+  const blob=new Blob([s.bytes],{type:'application/octet-stream'});
+  const url=URL.createObjectURL(blob); const name=s.name||lastName;
+  const crc = s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC SAI �— thử lại</span>':'');
+  $('result').innerHTML='<div style="margin-top:8px" class="stat"><span>Hoàn tất</span>'+crc+'</div>'+
+    '<a class="dl" download="'+name.replace(/"/g,'')+'" href="'+url+'">⬇️ Tải '+name+'</a>';
+  const a=$('result').querySelector('a'); if(a){ a.click(); } // tự tải
+  $('pi').style.width='100%';
+}
+
+function drawOverlay(quad,cw,ch){
+  ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
+  if(!quad)return;g.lineWidth=Math.max(2,cw/200);g.strokeStyle='#31d07a';g.beginPath();
+  g.moveTo(quad[0][0],quad[0][1]);for(let i=1;i<4;i++)g.lineTo(quad[i][0],quad[i][1]);g.closePath();g.stroke();
+  g.fillStyle='#3ea6ff';for(const p of quad){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}
+}
+</script>
+</body></html>
