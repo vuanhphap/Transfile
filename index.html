@@ -7,42 +7,38 @@
 .wrap{max-width:760px;margin:0 auto;padding:14px}
 h1{font-size:18px;margin:6px 0 2px}.sub{color:var(--muted);font-size:13px;margin-bottom:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
-label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
-select,button{font-size:15px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f151d;color:var(--fg);width:100%}
-button{background:var(--acc);color:#04121f;font-weight:700;border:none;cursor:pointer}
-button.sec{background:#1a2430;color:var(--fg);border:1px solid var(--line)}
+button{font-size:15px;padding:12px;border-radius:10px;border:none;background:var(--acc);color:#04121f;font-weight:700;width:100%;cursor:pointer}
 .viewwrap{position:relative;border-radius:12px;overflow:hidden;background:#000}
 video{width:100%;display:block}
 #ov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-.bar{height:14px;background:#0f151d;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
-.bar>i{display:block;height:100%;background:var(--acc);width:0%}
+.bar{height:16px;background:#0f151d;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--ok));width:0%;transition:width .12s}
 .stat{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);padding:3px 0}
 .stat b{color:var(--fg)}
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;background:#26313f}
 .badge.on{background:rgba(49,208,122,.15);color:var(--ok)}
+.badge.wait{background:rgba(62,166,255,.15);color:var(--acc)}
 .hint{font-size:12px;color:var(--muted);line-height:1.5}
 a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-weight:700;padding:12px;border-radius:10px;text-decoration:none;margin-top:8px}
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
-<div class="sub">Chọn đúng tốc độ như bên Gửi, bấm Bật camera rồi quay vào mã màu trên màn hình kia.</div>
+<div class="sub">Bấm Bật camera rồi quay vào mã màu trên màn hình kia. <b>Tự dò cấu hình</b> — khỏi chọn tốc độ.</div>
 
 <div class="card">
-  <label>Tốc độ (phải TRÙNG bên Gửi)</label>
-  <select id="preset"></select>
-  <div class="hint" id="presetInfo"></div>
-  <div class="row" style="margin-top:8px"><button id="cam">Bật camera</button></div>
+  <button id="cam">Bật camera</button>
+  <div style="margin-top:8px" class="stat"><span>Cấu hình</span><span id="cfg" class="badge wait">đang dò…</span></div>
 </div>
 
 <div class="card">
   <div class="viewwrap"><video id="v" playsinline muted></video><canvas id="ov"></canvas></div>
-  <div style="margin:10px 0 4px" class="stat"><span>Trạng thái dò mã</span><span id="det" class="badge">chưa thấy</span></div>
+  <div style="margin:10px 0 4px" class="stat"><span>Dò mã</span><span id="det" class="badge">chưa thấy</span></div>
   <div class="bar"><i id="pi"></i></div>
   <div class="stat" style="margin-top:6px"><span>Tiến độ</span><b id="prog">0 / 0 block</b></div>
   <div class="stat"><span>Tốc độ giải</span><b id="dfps">0 fps</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
   <div id="result"></div>
-  <div class="hint" style="margin-top:6px">Mẹo: giữ máy sao cho cả 4 ô vuông đen ở 4 góc đều nằm trong khung hình. Càng nét, càng gần (vẫn thấy đủ 4 góc) thì càng nhanh.</div>
+  <div class="hint" style="margin-top:6px">Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. Càng gần (vẫn đủ 4 góc) + càng nét càng nhanh. Tựa máy vào vật gì đó cho đỡ rung.</div>
 </div>
 </div>
 
@@ -262,8 +258,11 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 
   // Lấy danh sách neighbor cho 1 symbol từ seed (dùng chung 2 phía)
   function neighborsFromSeed(seed, K) {
+    // SYSTEMATIC: K seed đầu = block gốc (bậc 1) -> tiến độ chạy tuyến tính ngay từ khung đầu.
+    if (seed >= 0 && seed < K) return [seed];
+    // Sau đó là khung vá (Robust Soliton) để bù các block bị rớt/nhoè.
     var cdf = robustSolitonCDF(K);
-    var rng = mulberry32(seed);
+    var rng = mulberry32((seed ^ 0x9e3779b9) >>> 0);
     var d = sampleDegree(rng, K, cdf);
     return pickNeighbors(rng, K, d);
   }
@@ -806,70 +805,80 @@ a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-wei
 </script>
 <script>
 const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
-const PRESETS={
- 'an-toan':{N:52,P:8,nsym:40,label:'An toàn — chịu rung/mờ tốt, chậm hơn'},
- 'can-bang':{N:64,P:8,nsym:32,label:'Cân bằng — khuyên dùng'},
- 'nhanh':{N:72,P:8,nsym:32,label:'Nhanh'},
- 'cuc-nhanh':{N:76,P:16,nsym:56,label:'Cực nhanh — cần camera nét, giữ chắc tay'}
-};
+const BEACON={N:40,P:8,nsym:48};
+const geomB=G.makeGeometry(BEACON.N,BEACON.P,BEACON.nsym);
 const $=id=>document.getElementById(id);
-const sel=$('preset');
-Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;sel.appendChild(o);});
-sel.value='can-bang';
-let geom=null;
-function buildGeom(){const p=PRESETS[sel.value];geom=G.makeGeometry(p.N,p.P,p.nsym);
-  $('presetInfo').textContent=`Lưới ${p.N}×${p.N}, ${p.P} màu — ${geom.Bfount} byte/khung.`;}
-sel.onchange=buildGeom; buildGeom();
 
 const v=$('v'), ov=$('ov');
 const cap=document.createElement('canvas');
-let stream=null, running=false, decoder=null, activeId=null, lastName='received.bin';
-let fcount=0, lastT=performance.now(), decoded=false;
+let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
+let fcount=0, lastT=performance.now(), lastName='received.bin';
 
 $('cam').onclick=async()=>{
   if(running){ stop(); return; }
   try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});
     v.srcObject=stream; await v.play();
-    decoder=new C.Decoder(); activeId=null; decoded=false;
-    $('result').innerHTML=''; $('cam').textContent='Tắt camera'; running=true;
-    requestAnimationFrame(loop);
+    // khoá nét/phơi sáng/cân bằng trắng liên tục nếu máy hỗ trợ
+    try{const tr=stream.getVideoTracks()[0];const caps=tr.getCapabilities?tr.getCapabilities():{};const adv=[];
+      if(caps.focusMode&&caps.focusMode.includes('continuous'))adv.push({focusMode:'continuous'});
+      if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
+      if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
+      if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
+    decoder=new C.Decoder(); geomS=null; cfgKey=''; decoded=false; lastName='received.bin';
+    $('cfg').textContent='đang dò…'; $('cfg').className='badge wait';
+    $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
+    $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
   }catch(e){ alert('Không mở được camera: '+e.message+'\nHãy dùng HTTPS (GitHub Pages) và cấp quyền camera.'); }
 };
 function stop(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}$('cam').textContent='Bật camera';}
+
+function tryBeacon(logical){
+  if(logical && logical.length>=5 && logical[0]===0xBE && logical[1]===0xAC){
+    const N=logical[2],P=logical[3],ns=logical[4], key=N+'/'+P+'/'+ns;
+    if(key!==cfgKey){ cfgKey=key; geomS=G.makeGeometry(N,P,ns);
+      $('cfg').textContent='lưới '+N+'×'+N+', '+P+' màu'; $('cfg').className='badge on'; }
+    return true;
+  }
+  return false;
+}
 
 function loop(){
   if(!running) return;
   const vw=v.videoWidth, vh=v.videoHeight;
   if(vw&&vh){
-    // chụp về canvas ~600px chiều lớn
-    const scale=Math.min(1, 640/Math.max(vw,vh));
+    const scale=Math.min(1, 820/Math.max(vw,vh));
     const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
     const img=cx.getImageData(0,0,cw,ch);
-    let quad=null;
-    try{ quad=D.detectQuad(img); }catch(e){}
+    let quad=null; try{ quad=D.detectQuad(img); }catch(e){}
     drawOverlay(quad,cw,ch);
     if(quad){
       $('det').textContent='thấy 4 góc'; $('det').className='badge on';
-      const H=D.solveHomography(geom.markers.centers, quad);
-      if(H){
-        const smp=D.sampleGrid(img,H,geom);
-        let logical=null; try{ logical=G.decodeSampled(smp.cells,smp.centroids,geom);}catch(e){}
-        if(logical){
-          const info=C.parseFrame(logical);
-          if(info){
-            if(info.type===C.TYPE_META){ decoder.addMeta(info); if(info.name) {lastName=info.name;} activeId=info.fileId; $('fname').textContent=info.name||lastName; }
-            else { const s=decoder.addData(info); activeId=info.fileId;
-              updateProgress(s);
-              if(s.done && !decoded){ decoded=true; finish(s); }
+      let handled=false;
+      // đã có cấu hình -> thử giải data (homography theo geomS: tâm mốc = N-3.5)
+      if(geomS){
+        const Hs=D.solveHomography(geomS.markers.centers, quad);
+        if(Hs){ const smpS=D.sampleGrid(img,Hs,geomS);
+          let lg=null; try{ lg=G.decodeSampled(smpS.cells,smpS.centroids,geomS);}catch(e){}
+          if(lg){ const info=C.parseFrame(lg);
+            if(info){ handled=true;
+              if(info.type===C.TYPE_META){ decoder.addMeta(info); if(info.name)lastName=info.name; $('fname').textContent=info.name||lastName; }
+              else{ const s=decoder.addData(info); updateProgress(s); if(s.done&&!decoded){decoded=true;finish(s);} }
             }
           }
         }
       }
+      // chưa xử lý được -> thử beacon (homography theo geomB) để (tái) khoá cấu hình
+      if(!handled){
+        const Hb=D.solveHomography(geomB.markers.centers, quad);
+        if(Hb){ const smpB=D.sampleGrid(img,Hb,geomB);
+          let lb=null; try{ lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
+          tryBeacon(lb);
+        }
+      }
     } else { $('det').textContent='chưa thấy'; $('det').className='badge'; }
-    // fps
     fcount++; const now=performance.now(); if(now-lastT>500){$('dfps').textContent=Math.round(fcount*1000/(now-lastT))+' fps';fcount=0;lastT=now;}
   }
   requestAnimationFrame(loop);
@@ -880,19 +889,16 @@ function updateProgress(s){ if(!s)return; const pct=Math.min(100,Math.round(s.kn
 
 function finish(s){
   const blob=new Blob([s.bytes],{type:'application/octet-stream'});
-  const url=URL.createObjectURL(blob); const name=s.name||lastName;
-  const crc = s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC SAI �— thử lại</span>':'');
+  const url=URL.createObjectURL(blob); const name=(s.name||lastName).replace(/[\/\\"]/g,'_');
+  const crc=s.crcOk===true?'<span class="badge on">CRC khớp ✓</span>':(s.crcOk===false?'<span class="badge">CRC sai — thử lại</span>':'');
   $('result').innerHTML='<div style="margin-top:8px" class="stat"><span>Hoàn tất</span>'+crc+'</div>'+
-    '<a class="dl" download="'+name.replace(/"/g,'')+'" href="'+url+'">⬇️ Tải '+name+'</a>';
-  const a=$('result').querySelector('a'); if(a){ a.click(); } // tự tải
+    '<a class="dl" download="'+name+'" href="'+url+'">⬇️ Tải '+name+'</a>';
+  const a=$('result').querySelector('a'); if(a)a.click();
   $('pi').style.width='100%';
 }
-
-function drawOverlay(quad,cw,ch){
-  ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
+function drawOverlay(quad,cw,ch){ov.width=cw;ov.height=ch;const g=ov.getContext('2d');g.clearRect(0,0,cw,ch);
   if(!quad)return;g.lineWidth=Math.max(2,cw/200);g.strokeStyle='#31d07a';g.beginPath();
   g.moveTo(quad[0][0],quad[0][1]);for(let i=1;i<4;i++)g.lineTo(quad[i][0],quad[i][1]);g.closePath();g.stroke();
-  g.fillStyle='#3ea6ff';for(const p of quad){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}
-}
+  g.fillStyle='#3ea6ff';for(const p of quad){g.beginPath();g.arc(p[0],p[1],Math.max(3,cw/120),0,7);g.fill();}}
 </script>
 </body></html>
