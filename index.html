@@ -28,7 +28,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
-<div class="sub">Bấm Bật camera rồi quay vào mã màu trên màn hình kia. <b>Tự dò cấu hình</b> — khỏi chọn tốc độ.</div>
+<div class="sub">Mặc định đọc ngay preset <b>Cân bằng</b>. Beacon chỉ dùng để tự đổi preset ở đầu phiên; nếu cần có thể chọn tay.</div>
 
 <div class="card">
   <button id="cam">Bật camera</button>
@@ -38,7 +38,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   </div>
   <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng (mặc định)</span></div>
     <label class="ck"><input type="checkbox" id="dbg"> Debug (xem máy thấy gì)</label></div>
-  <div class="hint" style="margin-top:6px">Receiver luôn khởi động bằng <b>Cân bằng</b>. Beacon chỉ tự đổi cấu hình khi bên gửi dùng preset khác; nếu beacon khó đọc, có thể chọn preset thủ công ở trên.</div>
+  <div class="hint" style="margin-top:6px">Receiver khởi động bằng <b>Cân bằng</b> và đọc DATA ngay, không chờ beacon. Khi đã giải được DATA, cấu hình sẽ khóa để tránh beacon/rác làm đổi geometry. Chọn tay sẽ khóa preset thủ công.</div>
 </div>
 
 <div class="card">
@@ -714,7 +714,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
     var win=Math.max(10,Math.round(Math.min(sw,sh)/9));
     var dark=new Uint8Array(sw*sh);
     for(var y2=0;y2<sh;y2++){var y1=Math.max(0,y2-win),y3=Math.min(sh-1,y2+win);for(var x2=0;x2<sw;x2++){var x1=Math.max(0,x2-win),x3=Math.min(sw-1,x2+win);var area=(x3-x1+1)*(y3-y1+1);var sum=I[(y3+1)*(sw+1)+(x3+1)]-I[y1*(sw+1)+(x3+1)]-I[(y3+1)*(sw+1)+x1]+I[y1*(sw+1)+x1];dark[y2*sw+x2]=(lum[y2*sw+x2]*area<sum-9*area)?1:0;}}
-    return {dark:dark,sw:sw,sh:sh,scale:scale};
+    return {dark:dark,lum:lum,I:I,sw:sw,sh:sh,scale:scale};
   }
   function components(p){
     var sw=p.sw,sh=p.sh,dark=p.dark,visited=new Uint8Array(sw*sh),stack=new Int32Array(sw*sh),comps=[];
@@ -723,7 +723,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
       var sp=0;stack[sp++]=i;visited[i]=1;var area=0,sumx=0,sumy=0,minx=1e9,maxx=-1,miny=1e9,maxy=-1,touch=false;
       while(sp>0){var q=stack[--sp],px=q%sw,py=(q/sw)|0;area++;sumx+=px;sumy+=py;if(px<minx)minx=px;if(px>maxx)maxx=px;if(py<miny)miny=py;if(py>maxy)maxy=py;if(px===0||py===0||px===sw-1||py===sh-1)touch=true;
         if(px>0){var a=q-1;if(!visited[a]&&dark[a]){visited[a]=1;stack[sp++]=a;}}if(px<sw-1){var b=q+1;if(!visited[b]&&dark[b]){visited[b]=1;stack[sp++]=b;}}if(py>0){var c=q-sw;if(!visited[c]&&dark[c]){visited[c]=1;stack[sp++]=c;}}if(py<sh-1){var d=q+sw;if(!visited[d]&&dark[d]){visited[d]=1;stack[sp++]=d;}}}
-      if(touch)continue;var bw=maxx-minx+1,bh=maxy-miny+1;comps.push({area:area,x:sumx/area,y:sumy/area,bw:bw,bh:bh,fill:area/(bw*bh),aspect:Math.min(bw,bh)/Math.max(bw,bh)});
+      if(touch)continue;var bw=maxx-minx+1,bh=maxy-miny+1;comps.push({area:area,x:sumx/area,y:sumy/area,bw:bw,bh:bh,minx:minx,maxx:maxx,miny:miny,maxy:maxy,fill:area/(bw*bh),aspect:Math.min(bw,bh)/Math.max(bw,bh)});
     }
     return comps;
   }
@@ -733,42 +733,80 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   function pickCorners(cand){function pick(fn){var best=cand[0];for(var i=1;i<cand.length;i++)if(fn(cand[i])<fn(best))best=cand[i];return best;}return [pick(c=>c.x+c.y),pick(c=>-(c.x-c.y)),pick(c=>-(c.x+c.y)),pick(c=>c.x-c.y)];}
 
   function quadArea(P){return Math.abs(cross(P[0],P[1],P[2]))/2+Math.abs(cross(P[0],P[2],P[3]))/2;}
+  function rectSum(I,sw,x0,y0,x1,y1){
+    x0=Math.max(0,Math.min(sw-1,x0|0));x1=Math.max(0,Math.min(sw-1,x1|0));
+    var sh=(I.length/(sw+1))-1;y0=Math.max(0,Math.min(sh-1,y0|0));y1=Math.max(0,Math.min(sh-1,y1|0));
+    if(x1<x0||y1<y0)return 0;return I[(y1+1)*(sw+1)+(x1+1)]-I[y0*(sw+1)+(x1+1)]-I[(y1+1)*(sw+1)+x0]+I[y0*(sw+1)+x0];
+  }
+  function markerContrast(c,p,img){
+    var sw=p.sw,sh=p.sh,I=p.I,band=Math.max(2,Math.round(Math.max(c.bw,c.bh)*0.38));
+    var ix0=c.minx,iy0=c.miny,ix1=c.maxx,iy1=c.maxy;
+    var ox0=Math.max(0,ix0-band),oy0=Math.max(0,iy0-band),ox1=Math.min(sw-1,ix1+band),oy1=Math.min(sh-1,iy1+band);
+    var inA=(ix1-ix0+1)*(iy1-iy0+1),outA=(ox1-ox0+1)*(oy1-oy0+1)-inA;
+    if(inA<=0||outA<=0){c.ringContrast=0;c.whiteFrac=0;return 0;}
+    var inMean=rectSum(I,sw,ix0,iy0,ix1,iy1)/inA;
+    var outMean=(rectSum(I,sw,ox0,oy0,ox1,oy1)-rectSum(I,sw,ix0,iy0,ix1,iy1))/outA;
+    c.innerMean=inMean;c.ringMean=outMean;c.ringContrast=outMean-inMean;
+    // Marker thật có QUIET ZONE trắng. Đo trực tiếp tỷ lệ pixel sáng + gần trung tính quanh marker.
+    var src=img.data,W=img.width,H=img.height,inv=1/p.scale,white=0,total=0;
+    for(var yy=oy0;yy<=oy1;yy++)for(var xx=ox0;xx<=ox1;xx++){
+      if(xx>=ix0&&xx<=ix1&&yy>=iy0&&yy<=iy1)continue;
+      var X=Math.max(0,Math.min(W-1,Math.round(xx*inv))),Y=Math.max(0,Math.min(H-1,Math.round(yy*inv))),o=(Y*W+X)*4;
+      var R=src[o],G=src[o+1],B=src[o+2],mx=Math.max(R,G,B),mn=Math.min(R,G,B),L=0.299*R+0.587*G+0.114*B;
+      if(L>=140 && (mx-mn)<=75)white++; total++;
+    }
+    c.whiteFrac=total?white/total:0;
+    return c.ringContrast;
+  }
   function detectQuads(img, maxN){
     maxN=maxN||6;
     var p=prep(img,520);var comps=components(p);if(comps.length<4)return [];
     var sw=p.sw,sh=p.sh,minArea=Math.max(14,(sw*sh)*0.0003);
     var sq=comps.filter(c=>c.area>=minArea&&c.fill>=0.58&&c.aspect>=0.58);
-    var pool=sq.length>=4?sq:comps.filter(c=>c.area>=minArea);
-    if(pool.length<4)pool=comps.slice();
-    pool.sort((a,b)=>b.area-a.area);
-    var cand=pool.slice(0,Math.min(18,pool.length));
+    for(var ci=0;ci<sq.length;ci++)markerContrast(sq[ci],p,img);
+    // Không đủ 4 marker có quiet-zone trắng => không dựng quad giả từ các ô đen bên trong data.
+    var pool=sq.filter(c=>c.ringContrast>=18&&c.whiteFrac>=0.45);
+    if(pool.length<4)return [];
+    var maxArea=0;for(var ma=0;ma<pool.length;ma++)if(pool[ma].area>maxArea)maxArea=pool[ma].area;
+    pool=pool.filter(c=>c.area>=maxArea*0.22);
+    if(pool.length<4)return [];
+    pool.sort((a,b)=>((b.area*(1+Math.max(0,b.ringContrast||0)/100)*(0.7+Math.min(1,b.whiteFrac||0)))-(a.area*(1+Math.max(0,a.ringContrast||0)/100)*(0.7+Math.min(1,a.whiteFrac||0)))));
+    var cand=pool.slice(0,Math.min(14,pool.length));
     function valid(P){
       for(var a=0;a<4;a++)for(var b=a+1;b<4;b++)if(P[a]===P[b])return false;
       if(!isConvexQuad(P))return false;
       var d=[Math.sqrt(dist2(P[0],P[1])),Math.sqrt(dist2(P[1],P[2])),Math.sqrt(dist2(P[2],P[3])),Math.sqrt(dist2(P[3],P[0]))];
-      var mn=Math.min.apply(null,d),mx=Math.max.apply(null,d);if(mn<mx*0.30)return false;
+      var mn=Math.min.apply(null,d),mx=Math.max.apply(null,d);if(mn<mx*0.35)return false;
       if(quadArea(P)<sw*sh*0.006)return false;
-      var sa=[P[0].area,P[1].area,P[2].area,P[3].area],smn=Math.min.apply(null,sa),smx=Math.max.apply(null,sa);if(smn<smx*0.18)return false;
+      var sa=[P[0].area,P[1].area,P[2].area,P[3].area],smn=Math.min.apply(null,sa),smx=Math.max.apply(null,sa);if(smn<smx*0.28)return false;
+      var good=0;for(var z=0;z<4;z++)if((P[z].ringContrast||0)>=18&&(P[z].whiteFrac||0)>=0.45)good++;if(good<4)return false;
       return true;
     }
-    // gom tất cả tứ giác hợp lệ, sắp theo diện tích giảm dần, lấy các cái KHÁC NHAU
     var all=[]; var qp=pickCorners(cand); if(valid(qp))all.push(qp);
     var L=Math.min(cand.length,16);
     for(var i=0;i<L;i++)for(var j=i+1;j<L;j++)for(var k=j+1;k<L;k++)for(var m=k+1;m<L;m++){
       var P4=pickCorners([cand[i],cand[j],cand[k],cand[m]]);if(valid(P4))all.push(P4);
     }
     if(!all.length)return [];
-    all.sort((a,b)=>quadArea(b)-quadArea(a));
+    all.sort((a,b)=>{
+      function score(P){var rc=0,wf=0;for(var z=0;z<4;z++){rc+=Math.max(0,P[z].ringContrast||0);wf+=(P[z].whiteFrac||0);}return quadArea(P)*(1+rc/320)*(0.7+wf/4);}
+      return score(b)-score(a);
+    });
     var picked=[], sigs=[];
     for(var t=0;t<all.length&&picked.length<maxN;t++){
       var P=all[t]; var sig=P.map(c=>((c.x*7|0))+','+((c.y*7|0))).sort().join(';');
-      var dup=false; for(var u=0;u<sigs.length;u++){ // gần trùng?
-        var A=picked[u], close=0; for(var z=0;z<4;z++){var dx=P[z].x-A[z].x,dy=P[z].y-A[z].y;if(dx*dx+dy*dy<9)close++;} if(close>=3){dup=true;break;} }
-      if(dup)continue; picked.push(P); sigs.push(sig);
+      var dup=false; for(var u=0;u<sigs.length;u++){var A=picked[u],close=0;for(var z=0;z<4;z++){var dx=P[z].x-A[z].x,dy=P[z].y-A[z].y;if(dx*dx+dy*dy<9)close++;}if(close>=3){dup=true;break;}}
+      if(dup)continue;picked.push(P);sigs.push(sig);
     }
     var s=1/p.scale;
-    function refine(cx,cy,sidePx){var W=img.width,H=img.height,data=img.data,rad=sidePx*0.6;var x0=Math.max(0,Math.floor(cx-rad)),x1=Math.min(W-1,Math.ceil(cx+rad)),y0=Math.max(0,Math.floor(cy-rad)),y1=Math.min(H-1,Math.ceil(cy+rad));var mean=0,n=0;for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){var o=(y*W+x)*4;mean+=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];n++;}if(!n)return[cx,cy];mean/=n;var th=mean*0.7,sx=0,sy=0,swt=0;for(var y2=y0;y2<=y1;y2++)for(var x2=x0;x2<=x1;x2++){var o2=(y2*W+x2)*4;var l=0.299*data[o2]+0.587*data[o2+1]+0.114*data[o2+2];if(l<th){var w=th-l;sx+=x2*w;sy+=y2*w;swt+=w;}}if(swt<=0)return[cx,cy];return[sx/swt,sy/swt];}
-    return picked.map(P=>P.map(c=>refine(c.x*s,c.y*s,Math.sqrt(c.area)*s)));
+    function refine(cx,cy,sidePx){var W=img.width,H=img.height,data=img.data,rad=sidePx*0.62;var x0=Math.max(0,Math.floor(cx-rad)),x1=Math.min(W-1,Math.ceil(cx+rad)),y0=Math.max(0,Math.floor(cy-rad)),y1=Math.min(H-1,Math.ceil(cy+rad));var mean=0,n=0;for(var y=y0;y<=y1;y++)for(var x=x0;x<=x1;x++){var o=(y*W+x)*4;mean+=0.299*data[o]+0.587*data[o+1]+0.114*data[o+2];n++;}if(!n)return[cx,cy];mean/=n;var th=mean*0.72,sx=0,sy=0,swt=0;for(var y2=y0;y2<=y1;y2++)for(var x2=x0;x2<=x1;x2++){var o2=(y2*W+x2)*4;var l=0.299*data[o2]+0.587*data[o2+1]+0.114*data[o2+2];if(l<th){var w=th-l;sx+=x2*w;sy+=y2*w;swt+=w;}}if(swt<=0)return[cx,cy];return[sx/swt,sy/swt];}
+    var refined=picked.map(P=>P.map(c=>refine(c.x*s,c.y*s,Math.sqrt(c.area)*s)));
+    // Các tổ hợp component quanh cùng 4 marker có thể tạo nhiều quad gần trùng; gộp để giảm CPU/overlay rác.
+    var uniq=[];
+    function side(q){var z=0;for(var i=0;i<4;i++){var a=q[i],b=q[(i+1)%4];z+=Math.hypot(a[0]-b[0],a[1]-b[1]);}return z/4;}
+    function rms(a,b){var z=0;for(var i=0;i<4;i++){var dx=a[i][0]-b[i][0],dy=a[i][1]-b[i][1];z+=dx*dx+dy*dy;}return Math.sqrt(z/4);}
+    for(var ri=0;ri<refined.length;ri++){var q=refined[ri],dup=false;for(var ui=0;ui<uniq.length;ui++){if(rms(q,uniq[ui])<Math.max(8,side(uniq[ui])*0.10)){dup=true;break;}}if(!dup)uniq.push(q);if(uniq.length>=maxN)break;}
+    return uniq;
   }
   function detectQuad(img){var qs=detectQuads(img,1);return qs.length?qs[0]:null;}
   // trả về mask nhị phân (để debug hiển thị)
@@ -778,7 +816,15 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   function solveHomography(src,dst){var A=[],b=[];for(var i=0;i<4;i++){var x=src[i][0],y=src[i][1],X=dst[i][0],Y=dst[i][1];A.push([x,y,1,0,0,0,-x*X,-y*X]);b.push(X);A.push([0,0,0,x,y,1,-x*Y,-y*Y]);b.push(Y);}var h=solve8(A,b);if(!h)return null;return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];}
   function applyH(H,x,y){var d=H[6]*x+H[7]*y+H[8];return [(H[0]*x+H[1]*y+H[2])/d,(H[3]*x+H[4]*y+H[5])/d];}
   function sampleAt(img,x,y){var W=img.width,H=img.height,data=img.data,xi=Math.round(x),yi=Math.round(y),R=0,G=0,B=0,n=0;for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++){var X=xi+dx,Y=yi+dy;if(X<0||Y<0||X>=W||Y>=H)continue;var o=(Y*W+X)*4;R+=data[o];G+=data[o+1];B+=data[o+2];n++;}return n?[R/n,G/n,B/n]:[0,0,0];}
-  function sampleGrid(img,H,geom){var N=geom.N,cells=new Uint8ClampedArray(N*N*3);for(var r=0;r<N;r++)for(var c=0;c<N;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*N+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}var P=geom.P,sum=[];for(var i=0;i<P;i++)sum.push([0,0,0,0]);for(var q=0;q<geom.calib.length;q++){var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3;var st=sum[cl.p];st[0]+=cells[o2];st[1]+=cells[o2+1];st[2]+=cells[o2+2];st[3]++;}var cent=[];for(var p2=0;p2<P;p2++){var s2=sum[p2];cent.push(s2[3]?[s2[0]/s2[3],s2[1]/s2[3],s2[2]/s2[3]]:[0,0,0]);}return {cells:cells,centroids:cent};}
+  function sampleGrid(img,H,geom){
+    var N=geom.N,cells=new Uint8ClampedArray(N*N*3);
+    for(var r=0;r<N;r++)for(var c=0;c<N;c++){var pnt=applyH(H,c,r);var rgb=sampleAt(img,pnt[0],pnt[1]);var o=(r*N+c)*3;cells[o]=rgb[0];cells[o+1]=rgb[1];cells[o+2]=rgb[2];}
+    var P=geom.P,vals=[];for(var i=0;i<P;i++)vals.push([]);
+    for(var q=0;q<geom.calib.length;q++){var cl=geom.calib[q],o2=(cl.r*N+cl.c)*3;vals[cl.p].push([cells[o2],cells[o2+1],cells[o2+2]]);}
+    function med(a,ch){if(!a.length)return 0;var v=a.map(x=>x[ch]).sort((x,y)=>x-y);var n=v.length,mid=n>>1;return n&1?v[mid]:(v[mid-1]+v[mid])/2;}
+    var cent=[];for(var p2=0;p2<P;p2++){var a=vals[p2];cent.push(a.length?[med(a,0),med(a,1),med(a,2)]:[0,0,0]);}
+    return {cells:cells,centroids:cent};
+  }
 
   var API={detectQuad:detectQuad,detectQuads:detectQuads,solveHomography:solveHomography,applyH:applyH,sampleGrid:sampleGrid,prep:prep,debugMask:debugMask};
   if(typeof module==="object"&&module.exports)module.exports=API;else root.GridDecode=API;
@@ -801,7 +847,9 @@ const v=$('v'), ov=$('ov');
 const cap=document.createElement('canvas');
 let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
 let fcount=0, lastT=performance.now(), lastName='received.bin';
-let lastCenter=null, misses=0;   // bám vị trí theo thời gian
+let lastCenter=null, lastQuad=null, misses=0, frameNo=0;
+let dataLocked=false, manualLock=false;
+const TRACK_PAD=0.20, TRACK_GLOBAL_AFTER=4, TRACK_DROP_AFTER=18;
 
 const manualPreset=$('manualPreset');
 Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;manualPreset.appendChild(o);});
@@ -811,11 +859,20 @@ function presetKeyFromConfig(N,P,ns){
   for(const k of Object.keys(PRESETS)){const p=PRESETS[k];if(p.N===N&&p.P===P&&p.nsym===ns)return k;}
   return null;
 }
+function resetDecodeSession(){
+  decoder=new C.Decoder(); decoded=false; lastName='received.bin'; dataLocked=false;
+  $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block'; $('fname').textContent='—';
+}
 function setConfig(N,P,ns,source){
   const presetKey=presetKeyFromConfig(N,P,ns);
-  if(!presetKey) return false; // beacon lạ/hỏng: bỏ qua, không phá cấu hình đang chạy
+  if(!presetKey) return false;
+  if(source==='beacon' && (dataLocked||manualLock)) return false; // đã khóa bằng DATA/chọn tay thì beacon không được phá geometry
   const key=N+'/'+P+'/'+ns;
-  if(key!==cfgKey || !geomS){cfgKey=key;geomS=G.makeGeometry(N,P,ns);}
+  if(key!==cfgKey || !geomS){
+    const changed=!!cfgKey && key!==cfgKey;
+    cfgKey=key;geomS=G.makeGeometry(N,P,ns);lastQuad=null;lastCenter=null;misses=0;
+    if(changed && decoder) resetDecodeSession();
+  }
   manualPreset.value=presetKey;
   const p=PRESETS[presetKey];
   const src=source==='beacon'?'beacon':(source==='manual'?'chọn tay':'mặc định');
@@ -823,7 +880,7 @@ function setConfig(N,P,ns,source){
   $('cfg').className='badge on';
   return true;
 }
-function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];return setConfig(p.N,p.P,p.nsym,source);}
+function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];if(source==='manual'){manualLock=true;dataLocked=false;}return setConfig(p.N,p.P,p.nsym,source);}
 
 // QUAN TRỌNG: có cấu hình dùng được ngay cả khi chưa bao giờ đọc được beacon.
 applyPreset(DEFAULT_PRESET,'default');
@@ -839,8 +896,8 @@ $('cam').onclick=async()=>{
       if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
-    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; misses=0;
-    // Mỗi phiên camera bắt đầu ở Cân bằng; beacon có thể override, chọn tay luôn khả dụng.
+    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; dataLocked=false; manualLock=false;
+    // Mỗi phiên camera bắt đầu ở Cân bằng; DATA đọc được sẽ khóa cấu hình.
     cfgKey=''; geomS=null; manualPreset.value=DEFAULT_PRESET; applyPreset(DEFAULT_PRESET,'default');
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
     $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
@@ -849,55 +906,64 @@ $('cam').onclick=async()=>{
 function stop(){running=false;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}$('cam').textContent='Bật camera';}
 
 function centerOf(q){let sx=0,sy=0;for(const p of q){sx+=p[0];sy+=p[1];}return [sx/4,sy/4];}
+function quadBox(q,W,H,padFrac){let xs=q.map(p=>p[0]),ys=q.map(p=>p[1]);let x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);let pad=Math.max(18,Math.max(x1-x0,y1-y0)*(padFrac||0));x0=Math.max(0,Math.floor(x0-pad));y0=Math.max(0,Math.floor(y0-pad));x1=Math.min(W-1,Math.ceil(x1+pad));y1=Math.min(H-1,Math.ceil(y1+pad));return {x:x0,y:y0,w:Math.max(1,x1-x0+1),h:Math.max(1,y1-y0+1)};}
+function cropImageData(img,b){const out=new Uint8ClampedArray(b.w*b.h*4),src=img.data,W=img.width;for(let y=0;y<b.h;y++){let so=((b.y+y)*W+b.x)*4,eo=so+b.w*4;out.set(src.subarray(so,eo),y*b.w*4);}return {data:out,width:b.w,height:b.h};}
+function shiftQuad(q,dx,dy){return q.map(p=>[p[0]+dx,p[1]+dy]);}
+function quadTrackCost(q,prev){if(!prev)return 0;let s=0;for(let i=0;i<4;i++){let dx=q[i][0]-prev[i][0],dy=q[i][1]-prev[i][1];s+=dx*dx+dy*dy;}return Math.sqrt(s/4);}
+function orderTracked(quads){if(!lastQuad||quads.length<2)return quads;return quads.slice().sort((a,b)=>quadTrackCost(a,lastQuad)-quadTrackCost(b,lastQuad));}
 
 function loop(){
   if(!running) return;
   const vw=v.videoWidth, vh=v.videoHeight;
   if(vw&&vh){
+    frameNo++;
     const scale=Math.min(1, 820/Math.max(vw,vh));
     const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
     const img=cx.getImageData(0,0,cw,ch);
 
-    let quads=[]; try{ quads=D.detectQuads(img,6)||[]; }catch(e){}
-    // ưu tiên quad gần vị trí lần trước (bám code, bỏ rác); nếu chưa có thì theo diện tích (đã sắp sẵn)
-    if(lastCenter && quads.length>1){ quads=quads.slice().sort((a,b)=>{
-      const ca=centerOf(a),cb=centerOf(b);
-      return (Math.hypot(ca[0]-lastCenter[0],ca[1]-lastCenter[1]))-(Math.hypot(cb[0]-lastCenter[0],cb[1]-lastCenter[1])); }); }
+    let quads=[], usedRoi=false;
+    // TRACK MODE: khi đã có quad tốt, chỉ dò trong ROI quanh mã. Giảm rác + giảm CPU.
+    if(lastQuad && misses<TRACK_DROP_AFTER){
+      try{const b=quadBox(lastQuad,cw,ch,TRACK_PAD);const roi=cropImageData(img,b);quads=(D.detectQuads(roi,4)||[]).map(q=>shiftQuad(q,b.x,b.y));usedRoi=true;}catch(e){}
+      // Không global-search ngay mỗi frame; chỉ mở rộng sau vài lần hụt.
+      if(!quads.length && (misses>=TRACK_GLOBAL_AFTER || frameNo%6===0)){try{quads=D.detectQuads(img,6)||[];usedRoi=false;}catch(e){}}
+    } else { try{quads=D.detectQuads(img,6)||[];}catch(e){} }
+    quads=orderTracked(quads);
 
     let usedQuad=null, gotData=false;
     for(let qi=0;qi<quads.length;qi++){
       const q=quads[qi];
-      // đã có cấu hình -> thử giải data
+      // 1) DATA/META với cấu hình hiện tại luôn được thử trước.
       if(geomS){
         const Hs=D.solveHomography(geomS.markers.centers,q);
         if(Hs){ const smp=D.sampleGrid(img,Hs,geomS); let lg=null; try{lg=G.decodeSampled(smp.cells,smp.centroids,geomS);}catch(e){}
           if(lg){ const info=C.parseFrame(lg);
-            if(info){
-              if(info.type===C.TYPE_META){
-                decoder.addMeta(info); if(info.name)lastName=info.name; $('fname').textContent=info.name||lastName;
-                usedQuad=q; break;
-              } else if(info.type===C.TYPE_DATA){
-                const s=decoder.addData(info); gotData=true; updateProgress(s);
-                if(s.done&&!decoded){decoded=true;finish(s);}
-                usedQuad=q; break;
+            if(info && (info.type===C.TYPE_META || info.type===C.TYPE_DATA)){
+              // Bảo vệ session: blockSize/frame phải khớp đúng geometry đang dùng.
+              if(info.blockSize===geomS.Bfount){
+                if(info.type===C.TYPE_META){decoder.addMeta(info);dataLocked=true;if(info.name)lastName=info.name;$('fname').textContent=info.name||lastName;}
+                else {const s=decoder.addData(info);gotData=true;dataLocked=true;updateProgress(s);if(s.done&&!decoded){decoded=true;finish(s);}}
+                usedQuad=q;break;
               }
-              // Type không hợp lệ: bỏ qua frame, tiếp tục thử beacon/quad khác.
             }
           }
         }
       }
-      // thử beacon để (tái) khoá cấu hình
-      const Hb=D.solveHomography(geomB.markers.centers,q);
-      if(Hb){ const smpB=D.sampleGrid(img,Hb,geomB); let lb=null; try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
-        if(lb&&lb.length===5&&lb[0]===0xBE&&lb[1]===0xAC){ if(setConfig(lb[2],lb[3],lb[4],'beacon')){ usedQuad=q; break; } }
+      // 2) Beacon chỉ còn cần trước khi đã lock DATA và khi user chưa khóa tay.
+      if(!dataLocked && !manualLock){
+        const Hb=D.solveHomography(geomB.markers.centers,q);
+        if(Hb){const smpB=D.sampleGrid(img,Hb,geomB);let lb=null;try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
+          if(lb&&lb.length===5&&lb[0]===0xBE&&lb[1]===0xAC){if(setConfig(lb[2],lb[3],lb[4],'beacon')){usedQuad=q;break;}}
+        }
       }
     }
-    if(usedQuad){ lastCenter=centerOf(usedQuad); misses=0; $('det').textContent='đang giải'; $('det').className='badge on'; }
-    else { misses++; if(misses>25)lastCenter=null;
-      if(quads.length && misses>12){ $('det').textContent='thấy vùng — mờ? lùi xa cho nét'; $('det').className='badge wait'; }
-      else { $('det').textContent=quads.length?'thấy '+quads.length+' vùng':'chưa thấy'; $('det').className=quads.length?'badge wait':'badge'; } }
+
+    if(usedQuad){lastQuad=usedQuad.map(p=>[p[0],p[1]]);lastCenter=centerOf(usedQuad);misses=0;$('det').textContent=gotData?'đang giải':'đã khóa mã';$('det').className='badge on';}
+    else {misses++;if(misses>TRACK_DROP_AFTER){lastQuad=null;lastCenter=null;}
+      if(quads.length){$('det').textContent='thấy '+quads.length+' vùng'+(usedRoi?' (bám)':'');$('det').className='badge wait';}
+      else {$('det').textContent=lastQuad?'đang bám — chờ khung nét':'chưa thấy';$('det').className=lastQuad?'badge wait':'badge';}}
 
     drawOverlay(img,quads,usedQuad,cw,ch);
     fcount++; const now=performance.now(); if(now-lastT>500){$('dfps').textContent=Math.round(fcount*1000/(now-lastT))+' fps';fcount=0;lastT=now;}
