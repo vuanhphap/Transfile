@@ -23,22 +23,15 @@ video{width:100%;display:block}
 .rowb{display:flex;gap:8px;align-items:center;margin-top:8px}
 label.ck{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
 a.dl{display:block;text-align:center;background:var(--ok);color:#04121f;font-weight:700;padding:12px;border-radius:10px;text-decoration:none;margin-top:8px}
-select{font-size:14px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f151d;color:var(--fg);min-width:0}
-button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 </style></head><body>
 <div class="wrap">
 <h1>📥 Nhận file bằng camera</h1>
-<div class="sub">Mặc định đọc ngay preset <b>Cân bằng</b>. Beacon chỉ dùng để tự đổi preset ở đầu phiên; nếu cần có thể chọn tay.</div>
+<div class="sub">Receiver dùng cố định chế độ <b>Cân bằng</b> — lưới 80×80, 8 màu.</div>
 
 <div class="card">
   <button id="cam">Bật camera</button>
-  <div class="rowb">
-    <select id="manualPreset" style="flex:1" aria-label="Chọn preset thủ công"></select>
-    <button id="applyPreset" class="sec mini">Áp dụng tay</button>
-  </div>
-  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng (mặc định)</span></div>
+  <div class="rowb"><div class="stat" style="flex:1"><span>Cấu hình</span><span id="cfg" class="badge on">Cân bằng — 80×80, 8 màu</span></div>
     <label class="ck"><input type="checkbox" id="dbg"> Debug (xem máy thấy gì)</label></div>
-  <div class="hint" style="margin-top:6px">Receiver khởi động bằng <b>Cân bằng</b> và đọc DATA ngay, không chờ beacon. Khi đã giải được DATA, cấu hình sẽ khóa để tránh beacon/rác làm đổi geometry. Chọn tay sẽ khóa preset thủ công.</div>
 </div>
 
 <div class="card">
@@ -52,7 +45,7 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
   <div class="stat"><span>ETA thực tế</span><b id="reta">—</b></div>
   <div class="stat"><span>File</span><b id="fname">—</b></div>
   <div id="result"></div>
-  <div class="hint" style="margin-top:6px"><b>Lưu ý:</b> file lớn có thể cần hàng chục phút. Hãy nhìn <b>Block hữu ích/s</b> và <b>ETA thực tế</b>; bắt được 4 góc chưa đồng nghĩa frame màu đã giải CRC/RS thành công.<br>Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. <b>Nếu ảnh mờ hoặc mãi không đọc được: LÙI RA XA HƠN cho tới khi nét</b> — camera điện thoại không nét khi để quá sát. Tựa máy vào vật gì đó cho đỡ rung. Bảo bên gửi để mức <b>Chắc ăn</b> và hạ FPS nếu vẫn khó.</div>
+  <div class="hint" style="margin-top:6px"><b>Lưu ý:</b> file lớn có thể cần hàng chục phút. Hãy nhìn <b>Block hữu ích/s</b> và <b>ETA thực tế</b>; bắt được 4 góc chưa đồng nghĩa frame màu đã giải CRC/RS thành công.<br>Giữ sao cho <b>cả 4 ô vuông đen ở 4 góc</b> nằm trong khung. <b>Nếu ảnh mờ hoặc mãi không đọc được: LÙI RA XA HƠN cho tới khi nét</b> — camera điện thoại không nét khi để quá sát. Tựa máy vào vật gì đó cho đỡ rung. Hạ FPS bên Gửi nếu vẫn khó.</div>
 </div>
 </div>
 
@@ -835,66 +828,29 @@ button.mini{width:auto;padding:10px 12px;white-space:nowrap}
 </script>
 <script>
 const G=window.Grid, C=window.OpticalCodec, D=window.GridDecode;
-const PRESETS={
-  'an-toan':{N:60,P:8,nsym:48,label:'An toàn'},
-  'can-bang':{N:76,P:8,nsym:40,label:'Cân bằng'},
-  'nhanh':{N:84,P:8,nsym:40,label:'Nhanh'},
-  'sieu-net':{N:96,P:8,nsym:44,label:'Nhanh+'},
-  'toi-da':{N:104,P:8,nsym:48,label:'Tối đa'},
-  'cuc-nhanh':{N:88,P:16,nsym:56,label:'Cực nhanh (16 màu)'}
-};
-const DEFAULT_PRESET='can-bang';
-const BEACON={N:40,P:8,nsym:48};
-const geomB=G.makeGeometry(BEACON.N,BEACON.P,BEACON.nsym);
+// V3.4: chỉ giữ đúng preset Cân bằng, không beacon và không đổi cấu hình.
+const BALANCED={N:80,P:8,nsym:40,label:'Cân bằng'};
+const geomS=G.makeGeometry(BALANCED.N,BALANCED.P,BALANCED.nsym);
 const $=id=>document.getElementById(id);
 
 const v=$('v'), ov=$('ov');
 const cap=document.createElement('canvas');
-let stream=null, running=false, decoder=null, geomS=null, cfgKey='', decoded=false;
+let stream=null, running=false, decoder=null, decoded=false;
 let fcount=0, lastT=performance.now(), lastName='received.bin';
 let lastCenter=null, lastQuad=null, misses=0, frameNo=0;
 let lastDataOkT=0, lastDataOkQuad=null;
 const DATA_OK_HOLD_MS=700;
 let goodFrames=0, goodFramesWin=0, lastRateT=performance.now(), lastKnownForRate=0, blockRateEMA=0, lastUsefulT=0;
-let dataLocked=false, manualLock=false;
 const TRACK_PAD=0.20, TRACK_GLOBAL_AFTER=4, TRACK_DROP_AFTER=18;
 
-const manualPreset=$('manualPreset');
-Object.keys(PRESETS).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=PRESETS[k].label;manualPreset.appendChild(o);});
-manualPreset.value=DEFAULT_PRESET;
-
-function presetKeyFromConfig(N,P,ns){
-  for(const k of Object.keys(PRESETS)){const p=PRESETS[k];if(p.N===N&&p.P===P&&p.nsym===ns)return k;}
-  return null;
-}
 function resetDecodeSession(){
-  decoder=new C.Decoder(); decoded=false; lastName='received.bin'; dataLocked=false;
-  $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block'; $('fname').textContent='—';
+  decoder=new C.Decoder();decoded=false;lastName='received.bin';
+  $('result').innerHTML='';$('pi').style.width='0%';$('prog').textContent='0 / 0 block';$('fname').textContent='—';
   goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
   if($('goodfps'))$('goodfps').textContent='0 fps';if($('brps'))$('brps').textContent='0 block/s';if($('reta'))$('reta').textContent='—';
 }
-function setConfig(N,P,ns,source){
-  const presetKey=presetKeyFromConfig(N,P,ns);
-  if(!presetKey) return false;
-  if(source==='beacon' && (dataLocked||manualLock)) return false; // đã khóa bằng DATA/chọn tay thì beacon không được phá geometry
-  const key=N+'/'+P+'/'+ns;
-  if(key!==cfgKey || !geomS){
-    const changed=!!cfgKey && key!==cfgKey;
-    cfgKey=key;geomS=G.makeGeometry(N,P,ns);lastQuad=null;lastCenter=null;misses=0;
-    if(changed && decoder) resetDecodeSession();
-  }
-  manualPreset.value=presetKey;
-  const p=PRESETS[presetKey];
-  const src=source==='beacon'?'beacon':(source==='manual'?'chọn tay':'mặc định');
-  $('cfg').textContent=p.label+' — '+N+'×'+N+', '+P+' màu ('+src+')';
-  $('cfg').className='badge on';
-  return true;
-}
-function applyPreset(key,source){const p=PRESETS[key]||PRESETS[DEFAULT_PRESET];if(source==='manual'){manualLock=true;dataLocked=false;}return setConfig(p.N,p.P,p.nsym,source);}
-
-// QUAN TRỌNG: có cấu hình dùng được ngay cả khi chưa bao giờ đọc được beacon.
-applyPreset(DEFAULT_PRESET,'default');
-$('applyPreset').onclick=()=>applyPreset(manualPreset.value,'manual');
+$('cfg').textContent='Cân bằng — '+BALANCED.N+'×'+BALANCED.N+', '+BALANCED.P+' màu';
+$('cfg').className='badge on';
 
 $('cam').onclick=async()=>{
   if(running){ stop(); return; }
@@ -906,10 +862,8 @@ $('cam').onclick=async()=>{
       if(caps.exposureMode&&caps.exposureMode.includes('continuous'))adv.push({exposureMode:'continuous'});
       if(caps.whiteBalanceMode&&caps.whiteBalanceMode.includes('continuous'))adv.push({whiteBalanceMode:'continuous'});
       if(adv.length)await tr.applyConstraints({advanced:adv});}catch(e){}
-    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; dataLocked=false; manualLock=false; lastDataOkT=0; lastDataOkQuad=null;
+    decoder=new C.Decoder(); decoded=false; lastName='received.bin'; lastCenter=null; lastQuad=null; misses=0; frameNo=0; lastDataOkT=0; lastDataOkQuad=null;
     goodFrames=0;goodFramesWin=0;lastKnownForRate=0;blockRateEMA=0;lastUsefulT=0;lastRateT=performance.now();
-    // Mỗi phiên camera bắt đầu ở Cân bằng; DATA đọc được sẽ khóa cấu hình.
-    cfgKey=''; geomS=null; manualPreset.value=DEFAULT_PRESET; applyPreset(DEFAULT_PRESET,'default');
     $('result').innerHTML=''; $('pi').style.width='0%'; $('prog').textContent='0 / 0 block';
     $('cam').textContent='Tắt camera'; running=true; requestAnimationFrame(loop);
   }catch(e){ alert('Không mở được camera: '+e.message+'\nHãy dùng HTTPS (GitHub Pages) và cấp quyền camera.'); }
@@ -928,8 +882,7 @@ function loop(){
   const vw=v.videoWidth, vh=v.videoHeight;
   if(vw&&vh){
     frameNo++;
-    const capCap=(geomS&&geomS.N>=96)?1040:820; // lưới lớn (8 màu) cần thêm pixel để phân giải ô nhỏ; preset cũ giữ nguyên 820
-    const scale=Math.min(1, capCap/Math.max(vw,vh));
+    const scale=Math.min(1, 820/Math.max(vw,vh));
     const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
@@ -955,19 +908,12 @@ function loop(){
             if(info && (info.type===C.TYPE_META || info.type===C.TYPE_DATA)){
               // Bảo vệ session: blockSize/frame phải khớp đúng geometry đang dùng.
               if(info.blockSize===geomS.Bfount){
-                if(info.type===C.TYPE_META){decoder.addMeta(info);dataLocked=true;if(info.name)lastName=info.name;$('fname').textContent=info.name||lastName;}
-                else {const before=(decoder.sessions[info.fileId]&&decoder.sessions[info.fileId].known)||0;const s=decoder.addData(info);goodFrames++;goodFramesWin++;gotData=true;dataLocked=true;lastDataOkT=performance.now();lastDataOkQuad=q.map(p=>[p[0],p[1]]);if(s&&s.known>before)lastUsefulT=lastDataOkT;updateProgress(s);if(s.done&&!decoded){decoded=true;finish(s);}}
+                if(info.type===C.TYPE_META){decoder.addMeta(info);if(info.name)lastName=info.name;$('fname').textContent=info.name||lastName;}
+                else {const before=(decoder.sessions[info.fileId]&&decoder.sessions[info.fileId].known)||0;const s=decoder.addData(info);goodFrames++;goodFramesWin++;gotData=true;lastDataOkT=performance.now();lastDataOkQuad=q.map(p=>[p[0],p[1]]);if(s&&s.known>before)lastUsefulT=lastDataOkT;updateProgress(s);if(s.done&&!decoded){decoded=true;finish(s);}}
                 usedQuad=q;break;
               }
             }
           }
-        }
-      }
-      // 2) Beacon chỉ còn cần trước khi đã lock DATA và khi user chưa khóa tay.
-      if(!dataLocked && !manualLock){
-        const Hb=D.solveHomography(geomB.markers.centers,q);
-        if(Hb){const smpB=D.sampleGrid(img,Hb,geomB);let lb=null;try{lb=G.decodeSampled(smpB.cells,smpB.centroids,geomB);}catch(e){}
-          if(lb&&lb.length===5&&lb[0]===0xBE&&lb[1]===0xAC){if(setConfig(lb[2],lb[3],lb[4],'beacon')){usedQuad=q;break;}}
         }
       }
     }
