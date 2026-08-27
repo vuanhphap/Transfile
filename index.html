@@ -839,7 +839,9 @@ const PRESETS={
   'an-toan':{N:60,P:8,nsym:48,label:'An toàn'},
   'can-bang':{N:76,P:8,nsym:40,label:'Cân bằng'},
   'nhanh':{N:84,P:8,nsym:40,label:'Nhanh'},
-  'cuc-nhanh':{N:88,P:16,nsym:56,label:'Cực nhanh'}
+  'sieu-net':{N:96,P:8,nsym:44,label:'Nhanh+'},
+  'toi-da':{N:104,P:8,nsym:48,label:'Tối đa'},
+  'cuc-nhanh':{N:88,P:16,nsym:56,label:'Cực nhanh (16 màu)'}
 };
 const DEFAULT_PRESET='can-bang';
 const BEACON={N:40,P:8,nsym:48};
@@ -926,7 +928,8 @@ function loop(){
   const vw=v.videoWidth, vh=v.videoHeight;
   if(vw&&vh){
     frameNo++;
-    const scale=Math.min(1, 820/Math.max(vw,vh));
+    const capCap=(geomS&&geomS.N>=96)?1040:820; // lưới lớn (8 màu) cần thêm pixel để phân giải ô nhỏ; preset cũ giữ nguyên 820
+    const scale=Math.min(1, capCap/Math.max(vw,vh));
     const cw=Math.round(vw*scale), ch=Math.round(vh*scale);
     if(cap.width!==cw){cap.width=cw;cap.height=ch;}
     const cx=cap.getContext('2d'); cx.drawImage(v,0,0,cw,ch);
