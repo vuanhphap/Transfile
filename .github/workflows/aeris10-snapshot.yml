@@ -1,0 +1,52 @@
+name: AERIS-10 full snapshot bridge
+
+on:
+  push:
+    paths:
+      - ".github/workflows/aeris10-snapshot.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AERIS-10 upstream at pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: NawfalMotii79/PLFM_RADAR
+          ref: 749bd0f86a07a28a86347d8ce9c141e601057c40
+          fetch-depth: 0
+          path: PLFM_RADAR
+
+      - name: Record provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd PLFM_RADAR
+          git rev-parse HEAD | tee ../AERIS10_COMMIT.txt
+          git status --porcelain=v1 > ../AERIS10_STATUS.txt
+          git submodule status --recursive > ../AERIS10_SUBMODULES.txt || true
+
+      - name: Create byte-preserving archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --format=posix -czf AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz PLFM_RADAR AERIS10_COMMIT.txt AERIS10_STATUS.txt AERIS10_SUBMODULES.txt
+          sha256sum AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz | tee SHA256SUMS.txt
+
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06
+          path: |
+            AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz
+            SHA256SUMS.txt
+            AERIS10_COMMIT.txt
+            AERIS10_STATUS.txt
+            AERIS10_SUBMODULES.txt
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
