@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 0
           path: PLFM_RADAR
 
-      - name: Record provenance
+      - name: Create archive, checksum, and Drive-sized chunks
         shell: bash
         run: |
           set -euo pipefail
@@ -29,24 +29,50 @@ jobs:
           git rev-parse HEAD | tee ../AERIS10_COMMIT.txt
           git status --porcelain=v1 > ../AERIS10_STATUS.txt
           git submodule status --recursive > ../AERIS10_SUBMODULES.txt || true
-
-      - name: Create byte-preserving archive
-        shell: bash
-        run: |
-          set -euo pipefail
+          cd ..
           tar --format=posix -czf AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz PLFM_RADAR AERIS10_COMMIT.txt AERIS10_STATUS.txt AERIS10_SUBMODULES.txt
           sha256sum AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz | tee SHA256SUMS.txt
+          split -b 75M -d -a 2 AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz AERIS10.part.
+          sha256sum AERIS10.part.* > PART_SHA256SUMS.txt
+          ls -lh AERIS10.part.*
 
-      - name: Upload snapshot artifact
+      - name: Upload part 00
         uses: actions/upload-artifact@v4
         with:
-          name: AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06
+          name: AERIS10-part-00
+          path: AERIS10.part.00
+          compression-level: 0
+          retention-days: 7
+      - name: Upload part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERIS10-part-01
+          path: AERIS10.part.01
+          compression-level: 0
+          retention-days: 7
+      - name: Upload part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERIS10-part-02
+          path: AERIS10.part.02
+          compression-level: 0
+          retention-days: 7
+      - name: Upload part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERIS10-part-03
+          path: AERIS10.part.03
+          compression-level: 0
+          retention-days: 7
+      - name: Upload manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: AERIS10-manifest
           path: |
-            AERIS-10_PLFM_RADAR_main_749bd0f_2026-10-06.tar.gz
             SHA256SUMS.txt
+            PART_SHA256SUMS.txt
             AERIS10_COMMIT.txt
             AERIS10_STATUS.txt
             AERIS10_SUBMODULES.txt
           compression-level: 0
           retention-days: 7
-          if-no-files-found: error
